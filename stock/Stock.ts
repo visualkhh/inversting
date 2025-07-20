@@ -2,7 +2,7 @@ console.log('---saa');
 
 
 import yf from 'yahoo-finance2';
-import { writeFileSync, existsSync } from 'fs';
+import { writeFileSync, existsSync, mkdirSync } from 'fs';
 import { Parser } from 'json2csv';
 
 yf.suppressNotices(['ripHistorical']);
@@ -23,7 +23,8 @@ export type Interval = Parameters<typeof yf.chart>[1]['interval']
 export async function getData(symbol: string, {period = '7d', interval = '15m'}: {
   period?: string, interval?: Interval
 } = {}): Promise<string> {
-  let fileName = `${symbol}_${period}_${interval}_data.csv`;
+  mkdirSync('dist/stock', {recursive: true})
+  let fileName = `dist/stock/${symbol}_${period}_${interval}_data.csv`;
   if (existsSync(fileName)) {
     return fileName;
   }

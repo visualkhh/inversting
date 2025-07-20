@@ -1,4 +1,4 @@
-import { writeFileSync, existsSync } from 'fs';
+import { writeFileSync, existsSync, mkdirSync } from 'fs';
 import { Parser } from 'json2csv';
 
 const COIN_OHLC_API_URL = 'https://api.coingecko.com/api/v3/coins/{id}/ohlc';
@@ -25,7 +25,8 @@ export async function getCoinData(coinId: string, { period = '7d' }: { period?: 
       let intervalLabel = '';
       if (days === 1) intervalLabel = '30m'; // 1일은 30분 간격
       else if (days === 3) intervalLabel = '4h'; // 3일은 4시간 간격
-      fileName = `${coinId}_${period}_${intervalLabel}_ohlc_data.csv`;
+      mkdirSync('dist/coin', {recursive: true})
+      fileName = `dist/coin/${coinId}_${period}_${intervalLabel}_ohlc_data.csv`;
 
       if (existsSync(fileName)) {
         return fileName;
@@ -60,7 +61,9 @@ export async function getCoinData(coinId: string, { period = '7d' }: { period?: 
       const endTime = Math.floor(Date.now() / 1000);
       const startTime = endTime - days * 24 * 60 * 60; // Calculate start time based on period
 
-      fileName = `${coinId}_${period}_hourly_market_data.csv`; // Renamed for clarity
+
+      mkdirSync('dist/coin', {recursive: true})
+      fileName = `dist/coin/${coinId}_${period}_hourly_market_data.csv`; // Renamed for clarity
       if (existsSync(fileName)) {
         return fileName;
       }

@@ -1,5 +1,5 @@
 import { createCanvas, CanvasRenderingContext2D } from 'canvas';
-import { writeFileSync } from 'fs';
+import { mkdirSync, writeFileSync } from 'fs';
 
 interface ChartData {
   timestamp: string;
@@ -262,7 +262,8 @@ class Chart {
 
   private saveChart(filenameSuffix: string) {
     const buffer = this.canvas.toBuffer('image/png');
-    writeFileSync(`${this.symbol}${filenameSuffix}`, buffer);
+    mkdirSync('dist/chart', {recursive: true})
+    writeFileSync(`dist/chart/${this.symbol}${filenameSuffix}`, buffer);
   }
 
   static calculateStandardDeviation(data: ChartData[], period: number, sma: number[]): number[] {
