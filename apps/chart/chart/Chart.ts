@@ -55,6 +55,12 @@ class Chart {
     return this.height - this.padding - (price - minY) * scaleY;
   }
 
+  private getYForPricePanel(price: number, minY: number, maxY: number, panelHeight: number, panelTop: number): number {
+    const priceRange = maxY - minY;
+    const scaleY = panelHeight / priceRange;
+    return panelTop + panelHeight - (price - minY) * scaleY;
+  }
+
   private drawAxes(minY: number, maxY: number) {
     // Y축 그리기
     this.ctx.strokeStyle = '#CCCCCC';
@@ -85,11 +91,14 @@ class Chart {
     }
   }
 
-  private drawXAxisLabelsAndGrid(data: ChartData[]) {
+  private drawXAxisLabelsAndGrid(data: ChartData[], gridTop?: number, gridBottom?: number) {
     let lastDate = '';
     let lastLabelX = -Infinity;
     const minLabelGap = 80; // px 간격 기준으로 라벨 간소화
     const yAxis = this.height - this.padding;
+    const gridTopY = gridTop ?? this.padding;
+    const gridBottomY = gridBottom ?? (this.height - this.padding);
+    
     for (let i = 0; i < data.length; i++) {
       const currentData = data[i];
       const date = new Date(currentData.timestamp);
@@ -99,12 +108,12 @@ class Chart {
       if (currentDate !== lastDate) {
         const x = this.getX(i, data.length);
 
-        // 점선 그리기 (기존 유지)
+        // 점선 그리기 (지정된 범위 내에서만)
         this.ctx.strokeStyle = '#CCCCCC';
         this.ctx.setLineDash([2, 2]); // 점선 설정
         this.ctx.beginPath();
-        this.ctx.moveTo(x, this.padding);
-        this.ctx.lineTo(x, this.height - this.padding);
+        this.ctx.moveTo(x, gridTopY);
+        this.ctx.lineTo(x, gridBottomY);
         this.ctx.stroke();
         this.ctx.setLineDash([]); // 점선 해제
 
@@ -305,6 +314,8 @@ class Chart {
       eventPoint?: { title: string; timestamp: string; color?: string } | Array<{ title: string; timestamp: string; color?: string }>; 
       filenameSuffix?: string; 
       showAverage?: boolean;
+      showVolume?: boolean;
+      showObv?: boolean;
     } | Map<string, ChartData[]>,
     filenameSuffix: string = '_overlay_chart.png',
     showAverage: boolean = true
@@ -312,14 +323,18 @@ class Chart {
     // 입력 파라미터 호환 처리: 기존 (dataMap, filenameSuffix, showAverage) 또는 객체 입력
     let dataMap: Map<string, ChartData[]>;
     let eventPoints: Array<{ title: string; timestamp: string; color?: string }>; 
+    let showVolume = false;
+    let showObv = false;
     if (inputOrMap instanceof Map) {
       dataMap = inputOrMap as Map<string, ChartData[]>;
       eventPoints = []; // 이벤트 없음
     } else {
-      const obj = inputOrMap as { dataMap: Map<string, ChartData[]>; eventPoint?: any; filenameSuffix?: string; showAverage?: boolean };
+      const obj = inputOrMap as { dataMap: Map<string, ChartData[]>; eventPoint?: any; filenameSuffix?: string; showAverage?: boolean; showVolume?: boolean; showObv?: boolean };
       dataMap = obj.dataMap;
       filenameSuffix = obj.filenameSuffix ?? filenameSuffix;
       showAverage = obj.showAverage ?? showAverage;
+      showVolume = obj.showVolume ?? showVolume;
+      showObv = obj.showObv ?? showObv;
       if (!obj.eventPoint) {
         eventPoints = [];
       } else if (Array.isArray(obj.eventPoint)) {
@@ -399,23 +414,32 @@ class Chart {
       return result;
     };
 
-    // 각 주식의 데이터를 타임스탬프 기준으로 맵핑
+    // 각 주식의 데이터를 타임스탬프 기준으로 맵핑 (유효한 데이터만)
     const timestampDataMap = new Map<string, Map<string, number>>();
+    const obvMapBySymbol = new Map<string, Map<string, number>>();
     const highMapBySymbol = new Map<string, Map<string, number>>();
     const lowMapBySymbol = new Map<string, Map<string, number>>();
     const volumeDataMap = new Map<string, Map<string, number>>();
     dataMap.forEach((data, symbol) => {
       const priceMap = new Map<string, number>();
+      const obvMap = new Map<string, number>();
       const highMap = new Map<string, number>();
       const lowMap = new Map<string, number>();
       const volMap = new Map<string, number>();
       data.forEach(d => {
-        priceMap.set(d.timestamp, d.close);
-        highMap.set(d.timestamp, d.high);
-        lowMap.set(d.timestamp, d.low);
-        volMap.set(d.timestamp, d.volume);
+        // 가격이 0이거나 유효하지 않은 데이터는 제외
+        if (d.close > 0 && d.high > 0 && d.low > 0 && d.open > 0) {
+          priceMap.set(d.timestamp, d.close);
+          if (d.obv !== undefined && d.obv !== null) {
+            obvMap.set(d.timestamp, d.obv);
+          }
+          highMap.set(d.timestamp, d.high);
+          lowMap.set(d.timestamp, d.low);
+          volMap.set(d.timestamp, d.volume);
+        }
       });
       timestampDataMap.set(symbol, priceMap);
+      obvMapBySymbol.set(symbol, obvMap);
       highMapBySymbol.set(symbol, highMap);
       lowMapBySymbol.set(symbol, lowMap);
       volumeDataMap.set(symbol, volMap);
@@ -423,6 +447,7 @@ class Chart {
 
     // 각 주식을 0-100% 범위로 정규화 (타임스탬프 기준)
     const normalizedDataMap = new Map<string, Map<string, number>>();
+    const normalizedObvMap = new Map<string, Map<string, number>>();
     const normalizedHighMap = new Map<string, Map<string, number>>();
     const normalizedLowMap = new Map<string, Map<string, number>>();
     const normalizedVolumeMap = new Map<string, Map<string, number>>();
@@ -438,6 +463,21 @@ class Chart {
         normalizedMap.set(timestamp, normalized);
       });
       normalizedDataMap.set(symbol, normalizedMap);
+
+      // OBV 정규화 (있을 때만)
+      const obvRaw = obvMapBySymbol.get(symbol) || new Map<string, number>();
+      const obvValues = Array.from(obvRaw.values());
+      if (obvValues.length > 0) {
+        const minObv = Math.min(...obvValues);
+        const maxObv = Math.max(...obvValues);
+        const obvRange = maxObv - minObv;
+        const normObv = new Map<string, number>();
+        obvRaw.forEach((v, ts) => {
+          const nv = obvRange === 0 ? 50 : ((v - minObv) / obvRange) * 100;
+          normObv.set(ts, nv);
+        });
+        normalizedObvMap.set(symbol, normObv);
+      }
 
       // 고가/저가도 동일한 범위로 정규화
       const hMap = highMapBySymbol.get(symbol) || new Map<string, number>();
@@ -455,7 +495,7 @@ class Chart {
       normalizedHighMap.set(symbol, normHigh);
       normalizedLowMap.set(symbol, normLow);
 
-      // 거래량 정규화 (0~1)
+      // 거래량 정규화 (0~100%)
       const volMap = volumeDataMap.get(symbol) || new Map<string, number>();
       const vols = Array.from(volMap.values());
       const minVol = vols.length > 0 ? Math.min(...vols) : 0;
@@ -463,7 +503,7 @@ class Chart {
       const volRange = maxVol - minVol;
       const normalizedVol = new Map<string, number>();
       volMap.forEach((v, ts) => {
-        const norm = volRange === 0 ? 0 : (v - minVol) / volRange;
+        const norm = volRange === 0 ? 50 : ((v - minVol) / volRange) * 100;
         normalizedVol.set(ts, norm);
       });
       normalizedVolumeMap.set(symbol, normalizedVol);
@@ -471,6 +511,43 @@ class Chart {
 
     const minY = 0;
     const maxY = 100;
+
+    // 패널 분할 (Volume/OBV 표시 시)
+    const panelGap = 5; // 패널 간 간격
+    const totalHeight = this.height - this.padding * 2;
+    let priceAreaRatio = 1.0;
+    let volumeAreaRatio = 0;
+    let obvAreaRatio = 0;
+    let numGaps = 0; // 간격 개수
+    
+    if (showVolume && showObv) {
+      priceAreaRatio = 0.5;
+      volumeAreaRatio = 0.25;
+      obvAreaRatio = 0.25;
+      numGaps = 2; // price-volume, volume-obv
+    } else if (showVolume) {
+      priceAreaRatio = 0.7;
+      volumeAreaRatio = 0.3;
+      numGaps = 1; // price-volume
+    } else if (showObv) {
+      priceAreaRatio = 0.7;
+      obvAreaRatio = 0.3;
+      numGaps = 1; // price-obv
+    }
+    
+    // 간격을 제외한 실제 차트 영역
+    const availableHeight = totalHeight - (numGaps * panelGap);
+    const priceAreaHeight = availableHeight * priceAreaRatio;
+    const volumeAreaHeight = availableHeight * volumeAreaRatio;
+    const obvAreaHeight = availableHeight * obvAreaRatio;
+    
+    // 패널 위치 계산
+    const pricePanelTop = this.padding;
+    const pricePanelBottom = pricePanelTop + priceAreaHeight;
+    const volumePanelTop = showVolume ? pricePanelBottom + panelGap : 0;
+    const volumePanelBottom = showVolume ? volumePanelTop + volumeAreaHeight : 0;
+    const obvPanelTop = showObv ? (showVolume ? volumePanelBottom + panelGap : pricePanelBottom + panelGap) : 0;
+    const obvPanelBottom = showObv ? obvPanelTop + obvAreaHeight : 0;
 
     // X축 라벨용 데이터 생성
     const chartData: ChartData[] = sortedTimestamps.map(ts => ({
@@ -483,72 +560,139 @@ class Chart {
       obv: 0
     }));
 
-    this.drawAxes(minY, maxY);
-    this.drawXAxisLabelsAndGrid(chartData);
+    // Price 패널에만 그리드 그리기
+    this.drawXAxisLabelsAndGrid(chartData, pricePanelTop, pricePanelBottom);
 
-    // 이벤트 마커 그리기 (X축 영역)
-    if (eventPoints && eventPoints.length > 0) {
-      const yAxis = this.height - this.padding;
-      const findNearestIndex = (ts: string): number => {
-        const exact = sortedTimestamps.indexOf(ts);
-        if (exact !== -1) return exact;
-        // 가까운 타임스탬프 탐색 (날짜 파싱 기준)
-        const target = new Date(ts).getTime();
-        let bestIdx = 0;
-        let bestDiff = Number.POSITIVE_INFINITY;
-        for (let i = 0; i < sortedTimestamps.length; i++) {
-          const t = new Date(sortedTimestamps[i]).getTime();
-          const diff = Math.abs(t - target);
-          if (diff < bestDiff) {
-            bestDiff = diff;
-            bestIdx = i;
-          }
-        }
-        return bestIdx;
-      };
+    // Y축 그리기
+    this.ctx.strokeStyle = '#CCCCCC';
+    this.ctx.lineWidth = 1;
+    this.ctx.beginPath();
+    this.ctx.moveTo(this.padding, this.padding);
+    this.ctx.lineTo(this.padding, this.height - this.padding);
+    this.ctx.stroke();
 
-      eventPoints.forEach(evt => {
-        const idx = findNearestIndex(evt.timestamp);
-        const x = this.getX(idx, sortedTimestamps.length);
-        const color = evt.color || '#333333';
+    // X축 그리기
+    this.ctx.beginPath();
+    this.ctx.moveTo(this.padding, this.height - this.padding);
+    this.ctx.lineTo(this.width - this.padding, this.height - this.padding);
+    this.ctx.stroke();
 
-        this.ctx.save();
-        this.ctx.strokeStyle = color;
-        this.ctx.fillStyle = color;
-        this.ctx.lineWidth = 1.5;
-        // 차트 영역 전체에 수직 실선 (이벤트 라인)
-        this.ctx.beginPath();
-        this.ctx.moveTo(x, this.padding);
-        this.ctx.lineTo(x, this.height - this.padding);
-        this.ctx.stroke();
-        // 축 아래로 표시되는 틱
-        this.ctx.beginPath();
-        this.ctx.moveTo(x, yAxis);
-        this.ctx.lineTo(x, yAxis + 10);
-        this.ctx.stroke();
-
-        // 라벨: 기울여서 충돌 줄이기
-        this.ctx.translate(x + 5, yAxis + 14);
-        this.ctx.rotate((Math.PI / 180) * 45);
-        this.ctx.font = 'bold 10px Arial';
-        this.ctx.fillText(evt.title, 0, 0);
-        this.ctx.restore();
-      });
-    }
-
-    // Y축 라벨을 % 형식으로 다시 그리기
+    // Price 패널 Y축 라벨 (0-100%)
     this.ctx.fillStyle = '#000000';
-    this.ctx.font = '12px Arial';
+    this.ctx.font = '10px Arial';
+    // 'Price' 라벨
+    this.ctx.save();
+    this.ctx.translate(15, pricePanelTop + priceAreaHeight / 2);
+    this.ctx.rotate(-Math.PI / 2);
+    this.ctx.textAlign = 'center';
+    this.ctx.fillText('Price', 0, 0);
+    this.ctx.restore();
+    this.ctx.textAlign = 'left';
+    // 숫자 라벨
     for (let j = 0; j <= 5; j++) {
       const percent = (100 / 5) * j;
-      this.ctx.fillText(`${percent.toFixed(0)}%`, this.padding - 40, this.getY(percent, minY, maxY) + 5);
+      const y = this.getYForPricePanel(percent, minY, maxY, priceAreaHeight, pricePanelTop);
+      this.ctx.fillText(`${percent.toFixed(0)}%`, this.padding - 35, y + 3);
+    }
+
+    // Volume 패널 구분선 및 Y축 라벨
+    if (showVolume) {
+      this.ctx.strokeStyle = '#AAAAAA';
+      this.ctx.lineWidth = 1;
+      this.ctx.beginPath();
+      this.ctx.moveTo(this.padding, pricePanelBottom);
+      this.ctx.lineTo(this.width - this.padding, pricePanelBottom);
+      this.ctx.stroke();
+      
+      // Volume 패널 그리드 (X축 가이드라인)
+      let lastDateVol = '';
+      for (let i = 0; i < chartData.length; i++) {
+        const date = new Date(chartData[i].timestamp);
+        const currentDate = `${date.getMonth() + 1}/${date.getDate()}`;
+        if (currentDate !== lastDateVol) {
+          const x = this.getX(i, chartData.length);
+          this.ctx.strokeStyle = '#CCCCCC';
+          this.ctx.setLineDash([2, 2]);
+          this.ctx.beginPath();
+          this.ctx.moveTo(x, volumePanelTop);
+          this.ctx.lineTo(x, volumePanelBottom);
+          this.ctx.stroke();
+          this.ctx.setLineDash([]);
+          lastDateVol = currentDate;
+        }
+      }
+      
+      // Volume Y축 라벨 (Vol)
+      this.ctx.fillStyle = '#666666';
+      this.ctx.font = '9px Arial';
+      // 'Volume' 라벨
+      this.ctx.save();
+      this.ctx.translate(15, volumePanelTop + volumeAreaHeight / 2);
+      this.ctx.rotate(-Math.PI / 2);
+      this.ctx.textAlign = 'center';
+      this.ctx.fillText('Volume', 0, 0);
+      this.ctx.restore();
+      this.ctx.textAlign = 'left';
+      // 숫자 라벨
+      const volLabelCount = 3; // 0%, 50%, 100%
+      for (let j = 0; j <= volLabelCount; j++) {
+        const percent = (100 / volLabelCount) * j;
+        const y = volumePanelTop + volumeAreaHeight - (percent / 100) * volumeAreaHeight;
+        this.ctx.fillText(`${percent.toFixed(0)}%`, this.padding - 30, y + 3);
+      }
+    }
+    
+    // OBV 패널 구분선 및 Y축 라벨
+    if (showObv) {
+      this.ctx.strokeStyle = '#AAAAAA';
+      this.ctx.lineWidth = 1;
+      this.ctx.beginPath();
+      const obvSeparatorY = showVolume ? volumePanelBottom : pricePanelBottom;
+      this.ctx.moveTo(this.padding, obvSeparatorY);
+      this.ctx.lineTo(this.width - this.padding, obvSeparatorY);
+      this.ctx.stroke();
+      
+      // OBV 패널 그리드 (X축 가이드라인)
+      let lastDateObv = '';
+      for (let i = 0; i < chartData.length; i++) {
+        const date = new Date(chartData[i].timestamp);
+        const currentDate = `${date.getMonth() + 1}/${date.getDate()}`;
+        if (currentDate !== lastDateObv) {
+          const x = this.getX(i, chartData.length);
+          this.ctx.strokeStyle = '#CCCCCC';
+          this.ctx.setLineDash([2, 2]);
+          this.ctx.beginPath();
+          this.ctx.moveTo(x, obvPanelTop);
+          this.ctx.lineTo(x, obvPanelBottom);
+          this.ctx.stroke();
+          this.ctx.setLineDash([]);
+          lastDateObv = currentDate;
+        }
+      }
+      
+      // OBV Y축 라벨
+      this.ctx.fillStyle = '#666666';
+      this.ctx.font = '9px Arial';
+      // 'OBV' 라벨
+      this.ctx.save();
+      this.ctx.translate(15, obvPanelTop + obvAreaHeight / 2);
+      this.ctx.rotate(-Math.PI / 2);
+      this.ctx.textAlign = 'center';
+      this.ctx.fillText('OBV', 0, 0);
+      this.ctx.restore();
+      this.ctx.textAlign = 'left';
+      // 숫자 라벨
+      const obvLabelCount = 3; // 0%, 50%, 100%
+      for (let j = 0; j <= obvLabelCount; j++) {
+        const percent = (100 / obvLabelCount) * j;
+        const y = obvPanelTop + obvAreaHeight - (percent / 100) * obvAreaHeight;
+        this.ctx.fillText(`${percent.toFixed(0)}%`, this.padding - 30, y + 3);
+      }
     }
 
     // 각 주식의 정규화된 라인 및 백그라운드 캔들 그리기
     let colorIndex = 0;
     const symbols: string[] = [];
-    // 거래량 기반 두께 설정: 차트 높이의 1%를 최대 두께로 사용
-    const maxStrokeByVolume = Math.max(1, (this.height - this.padding * 2) * 0.01);
 
     normalizedDataMap.forEach((normalizedMap, symbol) => {
       symbols.push(symbol);
@@ -572,35 +716,85 @@ class Chart {
         const lo = lowSeries[i];
         if (!isNaN(hi) && !isNaN(lo)) {
           const x = this.getX(i, sortedTimestamps.length);
-          const yHigh = this.getY(hi, minY, maxY);
-          const yLow = this.getY(lo, minY, maxY);
+          const yHigh = this.getYForPricePanel(hi, minY, maxY, priceAreaHeight, pricePanelTop);
+          const yLow = this.getYForPricePanel(lo, minY, maxY, priceAreaHeight, pricePanelTop);
           const h = Math.max(1, yLow - yHigh);
           this.ctx.fillRect(x - candleWidth / 2, yHigh, candleWidth, h);
         }
       }
 
       let prevPoint: { x: number; y: number } | null = null;
-      let prevStroke = 1;
       for (let i = 0; i < priceSeries.length; i++) {
         const value = priceSeries[i];
         if (!isNaN(value)) {
           const x = this.getX(i, sortedTimestamps.length);
-          const y = this.getY(value, minY, maxY);
-          const volNorm = volSeries[i];
-          const rawStroke = !isNaN(volNorm) ? Math.max(1, volNorm * maxStrokeByVolume) : 1;
-          // 인접 구간과 부드럽게 이어지도록 두께를 완만히 변화시킴
-          const strokeWidth = prevPoint ? (prevStroke * 0.5 + rawStroke * 0.5) : rawStroke;
+          const y = this.getYForPricePanel(value, minY, maxY, priceAreaHeight, pricePanelTop);
           if (prevPoint) {
-            this.ctx.lineWidth = strokeWidth;
+            this.ctx.lineWidth = 1;
             this.ctx.beginPath();
             this.ctx.moveTo(prevPoint.x, prevPoint.y);
             this.ctx.lineTo(x, y);
             this.ctx.stroke();
           }
           prevPoint = { x, y };
-          prevStroke = strokeWidth;
         } else {
           prevPoint = null;
+        }
+      }
+
+      // Volume 선 그래프 (옵션)
+      if (showVolume) {
+        const volSeries = interpolateSeries(volMap);
+        this.ctx.strokeStyle = colors[colorIndex % colors.length];
+        this.ctx.lineJoin = 'round';
+        this.ctx.lineCap = 'round';
+        let prevVol: { x: number; y: number } | null = null;
+        for (let i = 0; i < volSeries.length; i++) {
+          const v = volSeries[i];
+          if (!isNaN(v)) {
+            const x = this.getX(i, sortedTimestamps.length);
+            // 0-100 범위로 clamp (외삽으로 인한 범위 초과 방지)
+            const clampedV = Math.max(0, Math.min(100, v));
+            const y = volumePanelTop + volumeAreaHeight - (clampedV / 100) * volumeAreaHeight;
+            if (prevVol) {
+              this.ctx.lineWidth = 1;
+              this.ctx.beginPath();
+              this.ctx.moveTo(prevVol.x, prevVol.y);
+              this.ctx.lineTo(x, y);
+              this.ctx.stroke();
+            }
+            prevVol = { x, y };
+          } else {
+            prevVol = null;
+          }
+        }
+      }
+
+      // OBV 라인 (옵션)
+      if (showObv && normalizedObvMap.has(symbol)) {
+        const obvSeries = interpolateSeries(normalizedObvMap.get(symbol)!);
+        this.ctx.strokeStyle = colors[colorIndex % colors.length]; // 선명한 색상
+        this.ctx.lineJoin = 'round';
+        this.ctx.lineCap = 'round';
+        let prevObv: { x: number; y: number } | null = null;
+        for (let i = 0; i < obvSeries.length; i++) {
+          const v = obvSeries[i];
+          if (!isNaN(v)) {
+            const x = this.getX(i, sortedTimestamps.length);
+            // 0-100 범위로 clamp (외삽으로 인한 범위 초과 방지)
+            const clampedV = Math.max(0, Math.min(100, v));
+            const y = obvPanelTop + obvAreaHeight - (clampedV / 100) * obvAreaHeight;
+            if (prevObv) {
+              this.ctx.lineWidth = 1;
+              this.ctx.beginPath();
+              this.ctx.moveTo(prevObv.x, prevObv.y);
+              this.ctx.lineTo(x, y);
+              this.ctx.stroke();
+            }
+            prevObv = { x, y };
+          } else {
+            prevObv = null;
+          }
         }
       }
       colorIndex++;
@@ -611,21 +805,28 @@ class Chart {
       // 각 심볼의 시계열을 선형 보간하여 동일한 타임라인으로 맞춤
       const interpolatedSeries: number[][] = [];
       const interpolatedVolSeries: number[][] = [];
+      const interpolatedObvSeries: number[][] = [];
       normalizedDataMap.forEach((normalizedMap) => {
         interpolatedSeries.push(interpolateSeries(normalizedMap));
       });
       normalizedVolumeMap.forEach((volMap) => {
         interpolatedVolSeries.push(interpolateSeries(volMap));
       });
+      normalizedObvMap.forEach((obvMap) => {
+        interpolatedObvSeries.push(interpolateSeries(obvMap));
+      });
 
       // 타임스탬프별 평균 계산 (보간/외삽된 값 기반)
       const avgData: number[] = new Array<number>(sortedTimestamps.length).fill(NaN);
       const avgVolData: number[] = new Array<number>(sortedTimestamps.length).fill(NaN);
+      const avgObvData: number[] = new Array<number>(sortedTimestamps.length).fill(NaN);
       for (let i = 0; i < sortedTimestamps.length; i++) {
         let sum = 0;
         let count = 0;
         let volSum = 0;
         let volCount = 0;
+        let obvSum = 0;
+        let obvCount = 0;
         for (let s = 0; s < interpolatedSeries.length; s++) {
           const v = interpolatedSeries[s][i];
           if (!isNaN(v)) {
@@ -640,58 +841,181 @@ class Chart {
             volCount++;
           }
         }
+        for (let s = 0; s < interpolatedObvSeries.length; s++) {
+          const ov = interpolatedObvSeries[s][i];
+          if (!isNaN(ov)) {
+            obvSum += ov;
+            obvCount++;
+          }
+        }
         avgData[i] = count > 0 ? sum / count : NaN;
         avgVolData[i] = volCount > 0 ? volSum / volCount : NaN;
+        avgObvData[i] = obvCount > 0 ? obvSum / obvCount : NaN;
       }
 
-      // 평균값 라인 (찐한 검은색)
+      // Price 평균값 라인 (찐한 검은색)
       this.ctx.strokeStyle = '#000000';
       this.ctx.lineJoin = 'round';
       this.ctx.lineCap = 'round';
       let prevAvg: { x: number; y: number } | null = null;
-      let prevStroke = 2.5;
       for (let i = 0; i < avgData.length; i++) {
         const value = avgData[i];
         if (!isNaN(value)) {
           const x = this.getX(i, sortedTimestamps.length);
-          const y = this.getY(value, minY, maxY);
-          const volNorm = avgVolData[i];
-          const rawStroke = !isNaN(volNorm) ? Math.max(1.5, volNorm * maxStrokeByVolume) : 1.5;
-          const strokeWidth = prevAvg ? (prevStroke * 0.5 + rawStroke * 0.5) : rawStroke;
+          const y = this.getYForPricePanel(value, minY, maxY, priceAreaHeight, pricePanelTop);
           if (prevAvg) {
-            this.ctx.lineWidth = strokeWidth;
+            this.ctx.lineWidth = 2;
             this.ctx.beginPath();
             this.ctx.moveTo(prevAvg.x, prevAvg.y);
             this.ctx.lineTo(x, y);
             this.ctx.stroke();
           }
           prevAvg = { x, y };
-          prevStroke = strokeWidth;
         } else {
           prevAvg = null;
+        }
+      }
+
+      // Volume 평균값 라인
+      if (showVolume) {
+        this.ctx.strokeStyle = '#000000';
+        let prevVolAvg: { x: number; y: number } | null = null;
+        for (let i = 0; i < avgVolData.length; i++) {
+          const value = avgVolData[i];
+          if (!isNaN(value)) {
+            const x = this.getX(i, sortedTimestamps.length);
+            const clampedValue = Math.max(0, Math.min(100, value));
+            const y = volumePanelTop + volumeAreaHeight - (clampedValue / 100) * volumeAreaHeight;
+            if (prevVolAvg) {
+              this.ctx.lineWidth = 2;
+              this.ctx.beginPath();
+              this.ctx.moveTo(prevVolAvg.x, prevVolAvg.y);
+              this.ctx.lineTo(x, y);
+              this.ctx.stroke();
+            }
+            prevVolAvg = { x, y };
+          } else {
+            prevVolAvg = null;
+          }
+        }
+      }
+
+      // OBV 평균값 라인
+      if (showObv) {
+        this.ctx.strokeStyle = '#000000';
+        let prevObvAvg: { x: number; y: number } | null = null;
+        for (let i = 0; i < avgObvData.length; i++) {
+          const value = avgObvData[i];
+          if (!isNaN(value)) {
+            const x = this.getX(i, sortedTimestamps.length);
+            const clampedValue = Math.max(0, Math.min(100, value));
+            const y = obvPanelTop + obvAreaHeight - (clampedValue / 100) * obvAreaHeight;
+            if (prevObvAvg) {
+              this.ctx.lineWidth = 2;
+              this.ctx.beginPath();
+              this.ctx.moveTo(prevObvAvg.x, prevObvAvg.y);
+              this.ctx.lineTo(x, y);
+              this.ctx.stroke();
+            }
+            prevObvAvg = { x, y };
+          } else {
+            prevObvAvg = null;
+          }
         }
       }
     }
 
     // 범례 그리기
-    const legendX = this.width - this.padding - 150;
+    const legendX = this.width - this.padding - 170;
     const legendY = this.padding + 20;
     this.ctx.font = '14px Arial';
     
     colorIndex = 0;
     symbols.forEach((symbol, idx) => {
       this.ctx.fillStyle = colors[colorIndex % colors.length];
-      this.ctx.fillRect(legendX, legendY + idx * 25, 20, 3);
+      this.ctx.fillRect(legendX, legendY + idx * 22, 20, 3);
       this.ctx.fillStyle = '#000000';
-      this.ctx.fillText(symbol, legendX + 30, legendY + idx * 25 + 5);
+      this.ctx.fillText(symbol, legendX + 30, legendY + idx * 22 + 5);
       colorIndex++;
     });
 
+    let legendOffset = symbols.length * 22;
     // 평균 범례 (옵션)
     if (showAverage) {
       this.ctx.fillStyle = '#000000';
-      this.ctx.fillRect(legendX, legendY + symbols.length * 25, 20, 3);
-      this.ctx.fillText('Average (Interpolated)', legendX + 30, legendY + symbols.length * 25 + 5);
+      this.ctx.fillRect(legendX, legendY + legendOffset, 20, 3);
+      this.ctx.fillText('Average (Interpolated)', legendX + 30, legendY + legendOffset + 5);
+      legendOffset += 22;
+    }
+    // Volume 범례 (옵션)
+    if (showVolume) {
+      this.ctx.fillStyle = '#888888';
+      this.ctx.fillRect(legendX, legendY + legendOffset, 20, 2);
+      this.ctx.fillStyle = '#000000';
+      this.ctx.fillText('Volume (trend)', legendX + 30, legendY + legendOffset + 5);
+      legendOffset += 22;
+    }
+    // OBV 범례 (옵션)
+    if (showObv) {
+      this.ctx.fillStyle = '#666666';
+      this.ctx.fillRect(legendX, legendY + legendOffset, 20, 2);
+      this.ctx.fillStyle = '#000000';
+      this.ctx.fillText('OBV (normalized)', legendX + 30, legendY + legendOffset + 5);
+    }
+
+    // 이벤트 마커 그리기 (맨 마지막에 - 모든 데이터 위에)
+    if (eventPoints && eventPoints.length > 0) {
+      const yAxis = this.height - this.padding;
+      const findNearestIndex = (ts: string): number => {
+        const exact = sortedTimestamps.indexOf(ts);
+        if (exact !== -1) return exact;
+        // 가까운 타임스탬프 탐색 (날짜 파싱 기준)
+        const target = new Date(ts).getTime();
+        let bestIdx = 0;
+        let bestDiff = Number.POSITIVE_INFINITY;
+        for (let i = 0; i < sortedTimestamps.length; i++) {
+          const t = new Date(sortedTimestamps[i]).getTime();
+          const diff = Math.abs(t - target);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestIdx = i;
+          }
+        }
+        return bestIdx;
+      };
+
+      eventPoints.forEach(evt => {
+        const exact = sortedTimestamps.indexOf(evt.timestamp);
+        // 데이터에 정확히 존재하는 이벤트만 그리기
+        if (exact !== -1) {
+          const idx = exact;
+          const x = this.getX(idx, sortedTimestamps.length);
+          const color = evt.color || '#333333';
+
+          this.ctx.save();
+          this.ctx.strokeStyle = color;
+          this.ctx.fillStyle = color;
+          this.ctx.lineWidth = 1.5;
+          // 전체 차트 높이에 수직 실선 (모든 패널을 관통)
+          this.ctx.beginPath();
+          this.ctx.moveTo(x, this.padding);
+          this.ctx.lineTo(x, this.height - this.padding);
+          this.ctx.stroke();
+          // 축 아래로 표시되는 틱
+          const yAxis = this.height - this.padding;
+          this.ctx.beginPath();
+          this.ctx.moveTo(x, yAxis);
+          this.ctx.lineTo(x, yAxis + 10);
+          this.ctx.stroke();
+
+          // 라벨: 기울여서 충돌 줄이기
+          this.ctx.translate(x + 5, yAxis + 14);
+          this.ctx.rotate((Math.PI / 180) * 45);
+          this.ctx.font = 'bold 10px Arial';
+          this.ctx.fillText(evt.title, 0, 0);
+          this.ctx.restore();
+        }
+      });
     }
 
     this.saveChart(filenameSuffix);

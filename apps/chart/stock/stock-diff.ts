@@ -1,6 +1,26 @@
 import { Chart } from '../chart/Chart';
 import { StockLoader, Interval } from './StockLoader';
-
+/*
+📊 obv (On-Balance Volume)
+이게 살짝 생소할 수 있는데, 핵심 지표임.
+개념
+가격 움직임에 거래량을 누적한 값
+“돈이 들어오고 있냐, 빠져나가고 있냐”를 보는 용도
+계산 방식 (개념적으로)
+오늘 종가 > 어제 종가 → obv += 오늘 거래량
+오늘 종가 < 어제 종가 → obv -= 오늘 거래량
+같으면 → 변화 없음
+👉 가격보다 수급을 먼저 보려고 쓰는 지표야.
+🧠 왜 obv가 중요하냐면
+가격은 횡보인데
+OBV는 계속 상승 👉 큰손 매집 중
+반대로
+가격은 오르는데
+OBV는 빠짐 👉 힘 없는 상승 (개미만 사고 있음)
+그래서
+“가격은 거짓말할 수 있어도 거래량은 거짓말 못 한다”
+이런 말 나오는 거임.
+ */
 const broadcomTicker = 'AVGO';
 const samsungTicker = '005930.KS';
 const intelTicker = 'INTC';
@@ -13,11 +33,11 @@ const skhynixTicker = '000660.KS';
 // 비교할 주식 티커 (파라미터로 받을 수 있도록)
 const symbols: string[] = process.argv.slice(2).length > 0 
   ? process.argv.slice(2) 
-  : [oracleTicker, samsungTicker,  skhynixTicker  ];
+  : [broadcomTicker, micronTicker,samsungTicker,  skhynixTicker  ];
 
 async function main() {
   // 날짜 범위 지정 방식
-  const from = '2025-08-01';
+  const from = '2025-10-01';
   const to = '2025-12-31';
   const loader = new StockLoader({ 
     from,
@@ -102,7 +122,9 @@ async function main() {
     dataMap: dateOnlyDataMap,
     eventPoint: events,
     filenameSuffix: '_overlay_chart.png',
-    showAverage: true
+    showAverage: true,
+    showVolume: true,
+    showObv: true,
   });
 
   console.log(`Chart saved: dist/chart/${chartName}_overlay_chart.png`);
