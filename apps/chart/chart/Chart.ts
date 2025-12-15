@@ -17,6 +17,12 @@ interface TradePoint {
   price: number;
 }
 
+interface EventMarker {
+  timestamp: string;
+  label: string;
+  color?: string;
+}
+
 class Chart {
   private width: number;
   private height: number;
@@ -554,6 +560,43 @@ class Chart {
       return result;
     };
 
+    // 평균값용 보간 함수: 실제 데이터 지점들 사이만 선형 보간 (외삽 없음)
+    const interpolateForAverage = (valueMap: Map<string, number>): number[] => {
+      const indices: number[] = [];
+      const values: number[] = [];
+      valueMap.forEach((val, ts) => {
+        const idx = timestampIndexMap.get(ts);
+        if (idx !== undefined) {
+          indices.push(idx);
+          values.push(val);
+        }
+      });
+      
+      if (indices.length === 0) {
+        return new Array<number>(sortedTimestamps.length).fill(NaN);
+      }
+      
+      const paired = indices.map((i, k) => ({ i, v: values[k] })).sort((a, b) => a.i - b.i);
+      const sortedIdx = paired.map(p => p.i);
+      const sortedVal = paired.map(p => p.v);
+      
+      const result = new Array<number>(sortedTimestamps.length).fill(NaN);
+      
+      // 실제 데이터 지점들 사이만 보간 (지점 자체는 설정)
+      for (let seg = 0; seg < sortedIdx.length - 1; seg++) {
+        const i0 = sortedIdx[seg];
+        const i1 = sortedIdx[seg + 1];
+        const v0 = sortedVal[seg];
+        const v1 = sortedVal[seg + 1];
+        const slope = (v1 - v0) / (i1 - i0);
+        for (let i = i0; i <= i1; i++) {
+          const t = i - i0;
+          result[i] = v0 + slope * t;
+        }
+      }
+      return result;
+    };
+
     // 각 주식의 데이터를 타임스탬프 기준으로 맵핑
     // close/volume/obv가 0이면 맵에 저장 안함 (라인 끊김), high/low는 0이면 캔들 미표시
     const timestampDataMap = new Map<string, Map<string, number>>();
@@ -967,7 +1010,6 @@ class Chart {
         } else {
           // NaN 구간이 있으면 현재 곡선을 그리고 리셋
           if (pricePoints.length > 0) {
-            this.ctx.lineWidth = 1;
             smoothCurve ? this.drawSmoothCurve(pricePoints, this.ctx) : (() => {
               this.ctx.beginPath();
               this.ctx.moveTo(pricePoints[0].x, pricePoints[0].y);
@@ -1082,18 +1124,18 @@ class Chart {
 
     // 평균값 그리기 (옵션)
     if (showAverage) {
-      // 각 심볼의 시계열을 선형 보간하여 동일한 타임라인으로 맞춤 (외삽 없음)
+      // 각 심볼의 시계열을 선형 보간하여 동일한 타임라인으로 맞춤 (실제 데이터 지점 사이만 보간)
       const interpolatedSeries: number[][] = [];
       const interpolatedVolSeries: number[][] = [];
       const interpolatedObvSeries: number[][] = [];
       normalizedDataMap.forEach((normalizedMap) => {
-        interpolatedSeries.push(interpolateSeriesNoExtrapolate(normalizedMap));
+        interpolatedSeries.push(interpolateForAverage(normalizedMap));
       });
       normalizedVolumeMap.forEach((volMap) => {
-        interpolatedVolSeries.push(interpolateSeriesNoExtrapolate(volMap));
+        interpolatedVolSeries.push(interpolateForAverage(volMap));
       });
       normalizedObvMap.forEach((obvMap) => {
-        interpolatedObvSeries.push(interpolateSeriesNoExtrapolate(obvMap));
+        interpolatedObvSeries.push(interpolateForAverage(obvMap));
       });
 
       // 타임스탬프별 평균 계산 (보간/외삽된 값 기반)
@@ -1363,6 +1405,324 @@ class Chart {
     }
     this.padding = originalPadding;
   }
+
+  // 새로운 간단한 오버레이 차트: timestamp를 unix 시간(초 단위)으로 변환하여 그리기
+  drawSimpleOverlayChart(dataMap: Map<string, ChartData[]>, filenameSuffix: string = '_overlay_chart.png', events: EventMarker[] = []) {
+    const colors = ['#0000FF', '#FF0000', '#00AA00', '#FF00FF'];
+    const padding = 50;
+
+    // 1. 모든 timestamp를 unix 시간(초 단위)으로 변환
+    const allTimePoints = new Set<number>();
+    const dataBySymbol = new Map<string, { time: number; open: number; high: number; low: number; close: number }[]>();
+
+    dataMap.forEach((data, symbol) => {
+      const points: { time: number; open: number; high: number; low: number; close: number }[] = [];
+      data.forEach(d => {
+        // 유효한 데이터만 (close > 0)
+        if (d.close && d.close > 0) {
+          const time = new Date(d.timestamp).getTime() / 1000; // unix 초 단위
+          allTimePoints.add(time);
+          points.push({ 
+            time, 
+            open: d.open, 
+            high: d.high, 
+            low: d.low, 
+            close: d.close 
+          });
+        }
+      });
+      dataBySymbol.set(symbol, points);
+    });
+
+    const sortedTimes = Array.from(allTimePoints).sort((a, b) => a - b);
+    if (sortedTimes.length === 0) return;
+
+    const minTime = sortedTimes[0];
+    const maxTime = sortedTimes[sortedTimes.length - 1];
+    const timeRange = maxTime - minTime || 1;
+
+    // 2. Y축 범위 계산 (각 심볼별 min/max)
+    const minMaxBySymbol = new Map<string, { min: number; max: number }>();
+    dataBySymbol.forEach((points, symbol) => {
+      const closes = points.map(p => p.close);
+      minMaxBySymbol.set(symbol, {
+        min: Math.min(...closes),
+        max: Math.max(...closes)
+      });
+    });
+
+    // 3. 좌표 변환 함수
+    const getX = (time: number): number => {
+      return padding + ((time - minTime) / timeRange) * (this.width - padding * 2);
+    };
+
+    const getY = (value: number, minVal: number, maxVal: number): number => {
+      const range = maxVal - minVal || 1;
+      return this.height - padding - ((value - minVal) / range) * (this.height - padding * 2);
+    };
+
+    // 4. 배경 그리기
+    this.ctx.fillStyle = '#FFFFFF';
+    this.ctx.fillRect(0, 0, this.width, this.height);
+
+    // 5. 그리드 그리기
+    this.ctx.strokeStyle = '#EEEEEE';
+    this.ctx.lineWidth = 1;
+    // 수직 그리드 (X축)
+    for (let i = 0; i < sortedTimes.length; i += Math.max(1, Math.floor(sortedTimes.length / 10))) {
+      const x = getX(sortedTimes[i]);
+      this.ctx.beginPath();
+      this.ctx.moveTo(x, padding);
+      this.ctx.lineTo(x, this.height - padding);
+      this.ctx.stroke();
+    }
+    // 수평 그리드 (Y축)
+    for (let i = 0; i <= 5; i++) {
+      const y = padding + (i / 5) * (this.height - padding * 2);
+      this.ctx.beginPath();
+      this.ctx.moveTo(padding, y);
+      this.ctx.lineTo(this.width - padding, y);
+      this.ctx.stroke();
+    }
+
+    // 6. 축 그리기
+    this.ctx.strokeStyle = '#000000';
+    this.ctx.lineWidth = 2;
+    // Y축
+    this.ctx.beginPath();
+    this.ctx.moveTo(padding, padding);
+    this.ctx.lineTo(padding, this.height - padding);
+    this.ctx.stroke();
+    // X축
+    this.ctx.beginPath();
+    this.ctx.moveTo(padding, this.height - padding);
+    this.ctx.lineTo(this.width - padding, this.height - padding);
+    this.ctx.stroke();
+
+    // 6-1. X축 레이블 (날짜)
+    this.ctx.fillStyle = '#000000';
+    this.ctx.font = '12px Arial';
+    this.ctx.textAlign = 'center';
+    
+    // 첫 번째 날짜 (왼쪽 정렬)
+    const firstTime = sortedTimes[0];
+    const firstX = getX(firstTime);
+    const firstDate = new Date(firstTime * 1000);
+    const firstLabel = `${firstDate.getMonth() + 1}/${firstDate.getDate()}`;
+    this.ctx.textAlign = 'left';
+    this.ctx.fillText(firstLabel, firstX, this.height - padding + 20);
+    
+    // 중간 날짜들
+    this.ctx.textAlign = 'center';
+    for (let i = 0; i < sortedTimes.length; i += Math.max(1, Math.floor(sortedTimes.length / 10))) {
+      if (i === 0 || i === sortedTimes.length - 1) continue; // 첫/마지막 제외
+      const time = sortedTimes[i];
+      const x = getX(time);
+      const date = new Date(time * 1000);
+      const label = `${date.getMonth() + 1}/${date.getDate()}`;
+      this.ctx.fillText(label, x, this.height - padding + 20);
+    }
+    
+    // 마지막 날짜 (오른쪽 정렬)
+    const lastTime = sortedTimes[sortedTimes.length - 1];
+    const lastX = getX(lastTime);
+    const lastDate = new Date(lastTime * 1000);
+    const lastLabel = `${lastDate.getMonth() + 1}/${lastDate.getDate()}`;
+    this.ctx.textAlign = 'right';
+    this.ctx.fillText(lastLabel, lastX, this.height - padding + 20);
+
+    // 6-2. Y축 레이블 (정규화된 값 0-100%)
+    this.ctx.textAlign = 'right';
+    this.ctx.textBaseline = 'middle';
+    for (let i = 0; i <= 5; i++) {
+      const value = 100 - (i * 20); // 100%, 80%, 60%, 40%, 20%, 0%
+      const y = padding + (i / 5) * (this.height - padding * 2);
+      this.ctx.fillText(`${value}%`, padding - 10, y);
+    }
+
+    // 6-3. 이벤트 마커 그리기
+    events.forEach(event => {
+      const eventTime = new Date(event.timestamp).getTime() / 1000;
+      if (eventTime >= minTime && eventTime <= maxTime) {
+        const x = getX(eventTime);
+        const eventColor = event.color || '#FF6600';
+        
+        // 세로 실선
+        this.ctx.strokeStyle = eventColor;
+        this.ctx.lineWidth = 2;
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, padding);
+        this.ctx.lineTo(x, this.height - padding);
+        this.ctx.stroke();
+        
+        // 이벤트 레이블
+        this.ctx.save();
+        this.ctx.translate(x, padding - 10);
+        this.ctx.rotate(-Math.PI / 4);
+        this.ctx.fillStyle = eventColor;
+        this.ctx.font = 'bold 12px Arial';
+        this.ctx.textAlign = 'right';
+        this.ctx.fillText(event.label, 0, 0);
+        this.ctx.restore();
+      }
+    });
+
+    // 7. 각 심볼별 라인 그리기
+    let colorIndex = 0;
+    dataBySymbol.forEach((points, symbol) => {
+      const color = colors[colorIndex % colors.length];
+      const minMax = minMaxBySymbol.get(symbol)!;
+
+      // 시간순으로 정렬
+      const sortedPoints = points.sort((a, b) => a.time - b.time);
+
+      if (sortedPoints.length === 0) {
+        colorIndex++;
+        return;
+      }
+
+      // 라인 그리기
+      this.ctx.strokeStyle = color;
+      this.ctx.lineWidth = 2;
+      this.ctx.lineJoin = 'round';
+      this.ctx.lineCap = 'round';
+
+      // 각 데이터 포인트의 타임스탬프에 맞춰 X축 수직 그리드와 캔들 그리기
+      sortedPoints.forEach(point => {
+        const x = getX(point.time);
+        
+        // 수직 그리드 라인 (연한 색상)
+        this.ctx.strokeStyle = color + '20'; // 매우 연한 색상
+        this.ctx.lineWidth = 1;
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, padding);
+        this.ctx.lineTo(x, this.height - padding);
+        this.ctx.stroke();
+        
+        // 캔들 그리기 (투명하게)
+        const yHigh = getY(point.high, minMax.min, minMax.max);
+        const yLow = getY(point.low, minMax.min, minMax.max);
+        const yOpen = getY(point.open, minMax.min, minMax.max);
+        const yClose = getY(point.close, minMax.min, minMax.max);
+        
+        // 투명도 설정
+        this.ctx.globalAlpha = 0.3;
+        
+        // High-Low 심지(wick) 그리기
+        this.ctx.strokeStyle = color;
+        this.ctx.lineWidth = 1;
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, yHigh);
+        this.ctx.lineTo(x, yLow);
+        this.ctx.stroke();
+        
+        // Open-Close 캔들 몸통 그리기
+        const candleWidth = 3;
+        const isUp = point.close >= point.open;
+        
+        if (isUp) {
+          // 상승: 빈 사각형
+          this.ctx.strokeStyle = color;
+          this.ctx.fillStyle = '#FFFFFF';
+          this.ctx.lineWidth = 1;
+        } else {
+          // 하락: 채워진 사각형
+          this.ctx.strokeStyle = color;
+          this.ctx.fillStyle = color;
+          this.ctx.lineWidth = 1;
+        }
+        
+        const rectY = Math.min(yOpen, yClose);
+        const rectHeight = Math.abs(yOpen - yClose) || 1; // 최소 1px
+        
+        this.ctx.fillRect(x - candleWidth/2, rectY, candleWidth, rectHeight);
+        this.ctx.strokeRect(x - candleWidth/2, rectY, candleWidth, rectHeight);
+        
+        // 투명도 복원
+        this.ctx.globalAlpha = 1.0;
+      });
+
+      // 라인 그리기
+      this.ctx.strokeStyle = color;
+      this.ctx.lineWidth = 2;
+      this.ctx.beginPath();
+      const firstX = getX(sortedPoints[0].time);
+      const firstY = getY(sortedPoints[0].close, minMax.min, minMax.max);
+      this.ctx.moveTo(firstX, firstY);
+
+      for (let i = 1; i < sortedPoints.length; i++) {
+        const point = sortedPoints[i];
+        const prevPoint = sortedPoints[i - 1];
+        const x = getX(point.time);
+        const y = getY(point.close, minMax.min, minMax.max);
+
+        // 시간 간격이 크면 (데이터 누락) 점선으로 연결
+        const timeDiff = point.time - prevPoint.time;
+        const avgTimeDiff = timeRange / sortedTimes.length;
+        
+        if (timeDiff > avgTimeDiff * 2) {
+          // 점선으로 연결
+          this.ctx.stroke();
+          this.ctx.setLineDash([5, 5]);
+          this.ctx.beginPath();
+          const prevX = getX(prevPoint.time);
+          const prevY = getY(prevPoint.close, minMax.min, minMax.max);
+          this.ctx.moveTo(prevX, prevY);
+          this.ctx.lineTo(x, y);
+          this.ctx.stroke();
+          this.ctx.setLineDash([]);
+          this.ctx.beginPath();
+          this.ctx.moveTo(x, y);
+        } else {
+          // 일반 실선 연결
+          this.ctx.lineTo(x, y);
+        }
+      }
+      this.ctx.stroke();
+
+      colorIndex++;
+    });
+
+    // 8. 범례 그리기 (상단 여백, 가로 배치)
+    const legendY = 15;
+    const legendItemWidth = 120;
+    const legendLineWidth = 20;
+    const legendStartX = padding + 10;
+    
+    // 범례 항목들 (가로로 배치)
+    colorIndex = 0;
+    let itemX = legendStartX;
+    dataBySymbol.forEach((_, symbol) => {
+      const color = colors[colorIndex % colors.length];
+      
+      // 색상 라인
+      this.ctx.strokeStyle = color;
+      this.ctx.lineWidth = 2;
+      this.ctx.beginPath();
+      this.ctx.moveTo(itemX, legendY);
+      this.ctx.lineTo(itemX + legendLineWidth, legendY);
+      this.ctx.stroke();
+      
+      // 심볼 텍스트
+      this.ctx.fillStyle = '#000000';
+      this.ctx.font = '11px Arial';
+      this.ctx.textAlign = 'left';
+      this.ctx.textBaseline = 'middle';
+      this.ctx.fillText(symbol, itemX + legendLineWidth + 5, legendY);
+      
+      itemX += legendItemWidth;
+      colorIndex++;
+    });
+
+    // 9. 이미지 저장
+    const path = require('path');
+    const filename = path.join(__dirname, '../../../dist/chart', `AVGO_vs_MU_vs_005930.KS_vs_000660.KS${filenameSuffix}`);
+    const dirname = path.dirname(filename);
+    mkdirSync(dirname, { recursive: true });
+    const buffer = this.canvas.toBuffer('image/png');
+    writeFileSync(filename, buffer);
+    console.log(`Chart saved: ${filename}`);
+  }
 }
 
-export { Chart, ChartData, TradePoint };
+export { Chart, ChartData, TradePoint, EventMarker };

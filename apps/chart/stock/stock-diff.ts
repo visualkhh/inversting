@@ -140,17 +140,7 @@ async function main() {
   
   const dataMap = await loader.loadStocks(symbols);
 
-  // 타임스탬프에서 날짜만 추출 (시간 제거)
-  const dateOnlyDataMap = new Map<string, any[]>();
-  dataMap.forEach((data, symbol) => {
-    const dateOnlyData = data.map(d => ({
-      ...d,
-      timestamp: d.timestamp.split(' ')[0] // 'YYYY-MM-DD HH:MM:SS' -> 'YYYY-MM-DD'
-    }));
-    dateOnlyDataMap.set(symbol, dateOnlyData);
-  });
-
-  // 차트 그리기
+  // 차트 그리기 (timestamp 전체 사용: YYYY-MM-DD HH:MM:SS, 따옴표 제거)
   const chartName = symbols.join('_vs_');
   // 고해상도 렌더링을 위해 dpiScale 적용 (예: 3)
   const overlayChart = new Chart(chartName, 1200, 600, 50, 3);
@@ -238,11 +228,11 @@ async function main() {
   const eventDateSet = new Set(events.map(e => e.timestamp));
 
   // ---------- 계량/진단: 모멘텀+변동성+이벤트 회귀, 롤링 상관, 레짐 ----------
-  const dates = getSortedDates(dateOnlyDataMap);
+  const dates = getSortedDates(dataMap);
   const priceMapBySym = new Map<string, Map<string, number>>();
   const returnsBySym = new Map<string, number[]>();
   symbols.forEach(sym => {
-    const arr = dateOnlyDataMap.get(sym) || [];
+    const arr = dataMap.get(sym) || [];
     const pm = buildPriceMap(arr);
     priceMapBySym.set(sym, pm);
     returnsBySym.set(sym, computeReturns(dates, pm));
@@ -380,27 +370,14 @@ async function main() {
     console.log(` ${sym}: latest vol10=${latestVol.toFixed(4)} regime=${regime} (p33=${p33.toFixed(4)}, p66=${p66.toFixed(4)})`);
   });
 
-  overlayChart.drawOverlayChart({
-    dataMap: dateOnlyDataMap,
-    eventPoint: events,
-    filenameSuffix: '_overlay_chart.png',
-    imageHeight: 1000,
-    imageWidth: 2000,
-    lineWidth: 1,
-    averageLineWidth: 2,
-    // eventLineWidth: 7,
-    eventLabelSize: 15,
-    fontSize: 20,
-    xAxisLabelSize: 10,
-    yAxisLabelSize: 10,
-    legendFontSize: 30,
-    xAxisWidth: 50,  // X축 영역 폭 (하단)
-    yAxisWidth: 50,  // Y축 영역 폭 (좌측)
-    showAverage: true,
-    // showVolume: true,
-    // showObv: true,
-    // smoothCurve: true
-  });
+  // 이벤트 마커 추가 (예시)
+  const eventMarkers = [
+    { timestamp: '2025-09-15 09:30:00', label: 'Event A', color: '#FF0000' },
+    { timestamp: '2025-10-15 09:30:00', label: 'Event B', color: '#0000FF' },
+    { timestamp: '2025-11-15 09:30:00', label: 'Event C', color: '#00AA00' },
+  ];
+
+  overlayChart.drawSimpleOverlayChart(dataMap, '_overlay_chart.png', eventMarkers);
 
   console.log(`Chart saved: dist/chart/${chartName}_overlay_chart.png`);
 }
