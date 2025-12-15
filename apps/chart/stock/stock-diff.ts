@@ -17,7 +17,7 @@ const symbols: string[] = process.argv.slice(2).length > 0
 
 async function main() {
   // 날짜 범위 지정 방식
-  const from = '2024-03-01';
+  const from = '2025-10-01';
   const to = '2025-12-31';
   const loader = new StockLoader({ 
     from,

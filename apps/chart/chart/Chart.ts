@@ -337,18 +337,85 @@ class Chart {
     });
     const sortedTimestamps = Array.from(allTimestamps).sort();
 
+    // 타임스탬프 인덱스 매핑 및 시리즈 보간 헬퍼
+    const timestampIndexMap = new Map<string, number>();
+    sortedTimestamps.forEach((ts, idx) => timestampIndexMap.set(ts, idx));
+    const interpolateSeries = (valueMap: Map<string, number>): number[] => {
+      // known points: index -> value
+      const indices: number[] = [];
+      const values: number[] = [];
+      valueMap.forEach((val, ts) => {
+        const idx = timestampIndexMap.get(ts);
+        if (idx !== undefined) {
+          indices.push(idx);
+          values.push(val);
+        }
+      });
+      const paired = indices.map((i, k) => ({ i, v: values[k] })).sort((a, b) => a.i - b.i);
+      const sortedIdx = paired.map(p => p.i);
+      const sortedVal = paired.map(p => p.v);
+
+      const result = new Array<number>(sortedTimestamps.length).fill(NaN);
+      if (sortedIdx.length === 0) return result;
+
+      // 왼쪽 외삽
+      for (let i = 0; i <= sortedIdx[0]; i++) {
+        if (i === sortedIdx[0]) {
+          result[i] = sortedVal[0];
+        } else {
+          const i0 = sortedIdx[0];
+          const i1 = sortedIdx[1] !== undefined ? sortedIdx[1] : sortedIdx[0];
+          const v0 = sortedVal[0];
+          const v1 = sortedVal[1] !== undefined ? sortedVal[1] : sortedVal[0];
+          const slope = i1 === i0 ? 0 : (v1 - v0) / (i1 - i0);
+          result[i] = v0 + slope * (i - i0);
+        }
+      }
+      // 내부 보간
+      for (let seg = 0; seg < sortedIdx.length - 1; seg++) {
+        const i0 = sortedIdx[seg];
+        const i1 = sortedIdx[seg + 1];
+        const v0 = sortedVal[seg];
+        const v1 = sortedVal[seg + 1];
+        const slope = (v1 - v0) / (i1 - i0);
+        for (let i = i0; i <= i1; i++) {
+          const t = i - i0;
+          result[i] = v0 + slope * t;
+        }
+      }
+      // 오른쪽 외삽
+      const last = sortedIdx[sortedIdx.length - 1];
+      const prev = sortedIdx[sortedIdx.length - 2] !== undefined ? sortedIdx[sortedIdx.length - 2] : last;
+      const vLast = sortedVal[sortedVal.length - 1];
+      const vPrev = sortedVal[sortedVal.length - 2] !== undefined ? sortedVal[sortedVal.length - 2] : vLast;
+      const slopeRight = last === prev ? 0 : (vLast - vPrev) / (last - prev);
+      for (let i = last; i < sortedTimestamps.length; i++) {
+        if (i === last) {
+          result[i] = vLast;
+        } else {
+          result[i] = vLast + slopeRight * (i - last);
+        }
+      }
+      return result;
+    };
+
     // 각 주식의 데이터를 타임스탬프 기준으로 맵핑
     const timestampDataMap = new Map<string, Map<string, number>>();
+    const volumeDataMap = new Map<string, Map<string, number>>();
     dataMap.forEach((data, symbol) => {
       const priceMap = new Map<string, number>();
+      const volMap = new Map<string, number>();
       data.forEach(d => {
         priceMap.set(d.timestamp, d.close);
+        volMap.set(d.timestamp, d.volume);
       });
       timestampDataMap.set(symbol, priceMap);
+      volumeDataMap.set(symbol, volMap);
     });
 
     // 각 주식을 0-100% 범위로 정규화 (타임스탬프 기준)
     const normalizedDataMap = new Map<string, Map<string, number>>();
+    const normalizedVolumeMap = new Map<string, Map<string, number>>();
     timestampDataMap.forEach((priceMap, symbol) => {
       const prices = Array.from(priceMap.values());
       const minPrice = Math.min(...prices);
@@ -361,6 +428,19 @@ class Chart {
         normalizedMap.set(timestamp, normalized);
       });
       normalizedDataMap.set(symbol, normalizedMap);
+
+      // 거래량 정규화 (0~1)
+      const volMap = volumeDataMap.get(symbol) || new Map<string, number>();
+      const vols = Array.from(volMap.values());
+      const minVol = vols.length > 0 ? Math.min(...vols) : 0;
+      const maxVol = vols.length > 0 ? Math.max(...vols) : 0;
+      const volRange = maxVol - minVol;
+      const normalizedVol = new Map<string, number>();
+      volMap.forEach((v, ts) => {
+        const norm = volRange === 0 ? 0 : (v - minVol) / volRange;
+        normalizedVol.set(ts, norm);
+      });
+      normalizedVolumeMap.set(symbol, normalizedVol);
     });
 
     const minY = 0;
@@ -441,27 +521,43 @@ class Chart {
     // 각 주식의 정규화된 라인 그리기 (얇게)
     let colorIndex = 0;
     const symbols: string[] = [];
+    // 거래량 기반 두께 설정: 차트 높이의 1%를 최대 두께로 사용
+    const maxStrokeByVolume = Math.max(1, (this.height - this.padding * 2) * 0.01);
+
     normalizedDataMap.forEach((normalizedMap, symbol) => {
       symbols.push(symbol);
       this.ctx.strokeStyle = colors[colorIndex % colors.length];
-      this.ctx.lineWidth = 1;
-      this.ctx.beginPath();
-      
-      let firstPoint = true;
-      sortedTimestamps.forEach((timestamp, i) => {
-        const value = normalizedMap.get(timestamp);
-        if (value !== undefined) {
+      this.ctx.lineJoin = 'round';
+      this.ctx.lineCap = 'round';
+      const volMap = normalizedVolumeMap.get(symbol) || new Map<string, number>();
+
+      const priceSeries = interpolateSeries(normalizedMap);
+      const volSeries = interpolateSeries(volMap);
+
+      let prevPoint: { x: number; y: number } | null = null;
+      let prevStroke = 1;
+      for (let i = 0; i < priceSeries.length; i++) {
+        const value = priceSeries[i];
+        if (!isNaN(value)) {
           const x = this.getX(i, sortedTimestamps.length);
           const y = this.getY(value, minY, maxY);
-          if (firstPoint) {
-            this.ctx.moveTo(x, y);
-            firstPoint = false;
-          } else {
+          const volNorm = volSeries[i];
+          const rawStroke = !isNaN(volNorm) ? Math.max(1, volNorm * maxStrokeByVolume) : 1;
+          // 인접 구간과 부드럽게 이어지도록 두께를 완만히 변화시킴
+          const strokeWidth = prevPoint ? (prevStroke * 0.5 + rawStroke * 0.5) : rawStroke;
+          if (prevPoint) {
+            this.ctx.lineWidth = strokeWidth;
+            this.ctx.beginPath();
+            this.ctx.moveTo(prevPoint.x, prevPoint.y);
             this.ctx.lineTo(x, y);
+            this.ctx.stroke();
           }
+          prevPoint = { x, y };
+          prevStroke = strokeWidth;
+        } else {
+          prevPoint = null;
         }
-      });
-      this.ctx.stroke();
+      }
       colorIndex++;
     });
 
@@ -469,75 +565,8 @@ class Chart {
     if (showAverage) {
       // 각 심볼의 시계열을 선형 보간하여 동일한 타임라인으로 맞춤
       const interpolatedSeries: number[][] = [];
-
-      const timestampIndexMap = new Map<string, number>();
-      sortedTimestamps.forEach((ts, idx) => timestampIndexMap.set(ts, idx));
-
-      const interpolateLine = (normalizedMap: Map<string, number>): number[] => {
-        // known points: index -> value
-        const indices: number[] = [];
-        const values: number[] = [];
-        normalizedMap.forEach((val, ts) => {
-          const idx = timestampIndexMap.get(ts);
-          if (idx !== undefined) {
-            indices.push(idx);
-            values.push(val);
-          }
-        });
-        // 정렬 보장 (Map 순서가 임의일 수 있음)
-        const paired = indices.map((i, k) => ({ i, v: values[k] })).sort((a, b) => a.i - b.i);
-        const sortedIdx = paired.map(p => p.i);
-        const sortedVal = paired.map(p => p.v);
-
-        const result = new Array<number>(sortedTimestamps.length).fill(NaN);
-        if (sortedIdx.length === 0) return result;
-
-        // 좌/우 외삽: 가장 좌측, 우측 구간은 최근 기울기 적용한 선형 외삽
-        // 내부 구간: 인접한 두 점 사이 선형 보간
-        // 왼쪽 외삽
-        for (let i = 0; i <= sortedIdx[0]; i++) {
-          if (i === sortedIdx[0]) {
-            result[i] = sortedVal[0];
-          } else {
-            // 첫 두 점의 기울기로 외삽 (첫 점 이전)
-            const i0 = sortedIdx[0];
-            const i1 = sortedIdx[1] !== undefined ? sortedIdx[1] : sortedIdx[0];
-            const v0 = sortedVal[0];
-            const v1 = sortedVal[1] !== undefined ? sortedVal[1] : sortedVal[0];
-            const slope = i1 === i0 ? 0 : (v1 - v0) / (i1 - i0);
-            result[i] = v0 + slope * (i - i0);
-          }
-        }
-        // 내부 보간
-        for (let seg = 0; seg < sortedIdx.length - 1; seg++) {
-          const i0 = sortedIdx[seg];
-          const i1 = sortedIdx[seg + 1];
-          const v0 = sortedVal[seg];
-          const v1 = sortedVal[seg + 1];
-          const slope = (v1 - v0) / (i1 - i0);
-          for (let i = i0; i <= i1; i++) {
-            const t = i - i0;
-            result[i] = v0 + slope * t;
-          }
-        }
-        // 오른쪽 외삽
-        const last = sortedIdx[sortedIdx.length - 1];
-        const prev = sortedIdx[sortedIdx.length - 2] !== undefined ? sortedIdx[sortedIdx.length - 2] : last;
-        const vLast = sortedVal[sortedVal.length - 1];
-        const vPrev = sortedVal[sortedVal.length - 2] !== undefined ? sortedVal[sortedVal.length - 2] : vLast;
-        const slopeRight = last === prev ? 0 : (vLast - vPrev) / (last - prev);
-        for (let i = last; i < sortedTimestamps.length; i++) {
-          if (i === last) {
-            result[i] = vLast;
-          } else {
-            result[i] = vLast + slopeRight * (i - last);
-          }
-        }
-        return result;
-      };
-
       normalizedDataMap.forEach((normalizedMap) => {
-        interpolatedSeries.push(interpolateLine(normalizedMap));
+        interpolatedSeries.push(interpolateSeries(normalizedMap));
       });
 
       // 타임스탬프별 평균 계산 (보간/외삽된 값 기반)
