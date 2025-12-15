@@ -61,6 +61,37 @@ class Chart {
     return panelTop + panelHeight - (price - minY) * scaleY;
   }
 
+  private drawSmoothCurve(points: Array<{ x: number; y: number }>, ctx: CanvasRenderingContext2D) {
+    if (points.length < 2) return;
+    
+    // 첫 점에서 시작
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    
+    if (points.length === 2) {
+      ctx.lineTo(points[1].x, points[1].y);
+    } else {
+      // 각 점 사이에 베지어 곡선 그리기
+      for (let i = 0; i < points.length - 1; i++) {
+        const p0 = i > 0 ? points[i - 1] : points[i];
+        const p1 = points[i];
+        const p2 = points[i + 1];
+        const p3 = i + 2 < points.length ? points[i + 2] : points[i + 1];
+        
+        // 카디널 스플라인을 사용한 제어점 계산
+        const tension = 0.25; // 곡선의 부드러움 정도 (0-1, 작을수록 부드러움)
+        const cp1x = p1.x + (p2.x - p0.x) * tension;
+        const cp1y = p1.y + (p2.y - p0.y) * tension;
+        const cp2x = p2.x - (p3.x - p1.x) * tension;
+        const cp2y = p2.y - (p3.y - p1.y) * tension;
+        
+        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+      }
+    }
+    
+    ctx.stroke();
+  }
+
   private drawAxes(minY: number, maxY: number) {
     // Y축 그리기
     this.ctx.strokeStyle = '#CCCCCC';
@@ -316,6 +347,7 @@ class Chart {
       showAverage?: boolean;
       showVolume?: boolean;
       showObv?: boolean;
+      smoothCurve?: boolean;
     } | Map<string, ChartData[]>,
     filenameSuffix: string = '_overlay_chart.png',
     showAverage: boolean = true
@@ -325,16 +357,18 @@ class Chart {
     let eventPoints: Array<{ title: string; timestamp: string; color?: string }>; 
     let showVolume = false;
     let showObv = false;
+    let smoothCurve = false;
     if (inputOrMap instanceof Map) {
       dataMap = inputOrMap as Map<string, ChartData[]>;
       eventPoints = []; // 이벤트 없음
     } else {
-      const obj = inputOrMap as { dataMap: Map<string, ChartData[]>; eventPoint?: any; filenameSuffix?: string; showAverage?: boolean; showVolume?: boolean; showObv?: boolean };
+      const obj = inputOrMap as { dataMap: Map<string, ChartData[]>; eventPoint?: any; filenameSuffix?: string; showAverage?: boolean; showVolume?: boolean; showObv?: boolean; smoothCurve?: boolean };
       dataMap = obj.dataMap;
       filenameSuffix = obj.filenameSuffix ?? filenameSuffix;
       showAverage = obj.showAverage ?? showAverage;
       showVolume = obj.showVolume ?? showVolume;
       showObv = obj.showObv ?? showObv;
+      smoothCurve = obj.smoothCurve ?? smoothCurve;
       if (!obj.eventPoint) {
         eventPoints = [];
       } else if (Array.isArray(obj.eventPoint)) {
@@ -724,22 +758,41 @@ class Chart {
       }
 
       let prevPoint: { x: number; y: number } | null = null;
+      const pricePoints: Array<{ x: number; y: number }> = [];
+      
       for (let i = 0; i < priceSeries.length; i++) {
         const value = priceSeries[i];
         if (!isNaN(value)) {
           const x = this.getX(i, sortedTimestamps.length);
           const y = this.getYForPricePanel(value, minY, maxY, priceAreaHeight, pricePanelTop);
-          if (prevPoint) {
-            this.ctx.lineWidth = 1;
-            this.ctx.beginPath();
-            this.ctx.moveTo(prevPoint.x, prevPoint.y);
-            this.ctx.lineTo(x, y);
-            this.ctx.stroke();
-          }
-          prevPoint = { x, y };
+          pricePoints.push({ x, y });
         } else {
-          prevPoint = null;
+          // NaN 구간이 있으면 현재 곡선을 그리고 리셋
+          if (pricePoints.length > 0) {
+            this.ctx.lineWidth = 1;
+            smoothCurve ? this.drawSmoothCurve(pricePoints, this.ctx) : (() => {
+              this.ctx.beginPath();
+              this.ctx.moveTo(pricePoints[0].x, pricePoints[0].y);
+              for (let j = 1; j < pricePoints.length; j++) {
+                this.ctx.lineTo(pricePoints[j].x, pricePoints[j].y);
+              }
+              this.ctx.stroke();
+            })();
+            pricePoints.length = 0;
+          }
         }
+      }
+      // 마지막 곡선 그리기
+      if (pricePoints.length > 0) {
+        this.ctx.lineWidth = 1;
+        smoothCurve ? this.drawSmoothCurve(pricePoints, this.ctx) : (() => {
+          this.ctx.beginPath();
+          this.ctx.moveTo(pricePoints[0].x, pricePoints[0].y);
+          for (let j = 1; j < pricePoints.length; j++) {
+            this.ctx.lineTo(pricePoints[j].x, pricePoints[j].y);
+          }
+          this.ctx.stroke();
+        })();
       }
 
       // Volume 선 그래프 (옵션)
@@ -748,53 +801,81 @@ class Chart {
         this.ctx.strokeStyle = colors[colorIndex % colors.length];
         this.ctx.lineJoin = 'round';
         this.ctx.lineCap = 'round';
-        let prevVol: { x: number; y: number } | null = null;
+        this.ctx.lineWidth = 1;
+        
+        const volPoints: Array<{ x: number; y: number }> = [];
         for (let i = 0; i < volSeries.length; i++) {
           const v = volSeries[i];
           if (!isNaN(v)) {
             const x = this.getX(i, sortedTimestamps.length);
-            // 0-100 범위로 clamp (외삽으로 인한 범위 초과 방지)
             const clampedV = Math.max(0, Math.min(100, v));
             const y = volumePanelTop + volumeAreaHeight - (clampedV / 100) * volumeAreaHeight;
-            if (prevVol) {
-              this.ctx.lineWidth = 1;
-              this.ctx.beginPath();
-              this.ctx.moveTo(prevVol.x, prevVol.y);
-              this.ctx.lineTo(x, y);
-              this.ctx.stroke();
-            }
-            prevVol = { x, y };
+            volPoints.push({ x, y });
           } else {
-            prevVol = null;
+            if (volPoints.length > 0) {
+              smoothCurve ? this.drawSmoothCurve(volPoints, this.ctx) : (() => {
+                this.ctx.beginPath();
+                this.ctx.moveTo(volPoints[0].x, volPoints[0].y);
+                for (let j = 1; j < volPoints.length; j++) {
+                  this.ctx.lineTo(volPoints[j].x, volPoints[j].y);
+                }
+                this.ctx.stroke();
+              })();
+              volPoints.length = 0;
+            }
           }
+        }
+        if (volPoints.length > 0) {
+          smoothCurve ? this.drawSmoothCurve(volPoints, this.ctx) : (() => {
+            this.ctx.beginPath();
+            this.ctx.moveTo(volPoints[0].x, volPoints[0].y);
+            for (let j = 1; j < volPoints.length; j++) {
+              this.ctx.lineTo(volPoints[j].x, volPoints[j].y);
+            }
+            this.ctx.stroke();
+          })();
         }
       }
 
       // OBV 라인 (옵션)
       if (showObv && normalizedObvMap.has(symbol)) {
         const obvSeries = interpolateSeries(normalizedObvMap.get(symbol)!);
-        this.ctx.strokeStyle = colors[colorIndex % colors.length]; // 선명한 색상
+        this.ctx.strokeStyle = colors[colorIndex % colors.length];
         this.ctx.lineJoin = 'round';
         this.ctx.lineCap = 'round';
-        let prevObv: { x: number; y: number } | null = null;
+        this.ctx.lineWidth = 1;
+        
+        const obvPoints: Array<{ x: number; y: number }> = [];
         for (let i = 0; i < obvSeries.length; i++) {
           const v = obvSeries[i];
           if (!isNaN(v)) {
             const x = this.getX(i, sortedTimestamps.length);
-            // 0-100 범위로 clamp (외삽으로 인한 범위 초과 방지)
             const clampedV = Math.max(0, Math.min(100, v));
             const y = obvPanelTop + obvAreaHeight - (clampedV / 100) * obvAreaHeight;
-            if (prevObv) {
-              this.ctx.lineWidth = 1;
-              this.ctx.beginPath();
-              this.ctx.moveTo(prevObv.x, prevObv.y);
-              this.ctx.lineTo(x, y);
-              this.ctx.stroke();
-            }
-            prevObv = { x, y };
+            obvPoints.push({ x, y });
           } else {
-            prevObv = null;
+            if (obvPoints.length > 0) {
+              smoothCurve ? this.drawSmoothCurve(obvPoints, this.ctx) : (() => {
+                this.ctx.beginPath();
+                this.ctx.moveTo(obvPoints[0].x, obvPoints[0].y);
+                for (let j = 1; j < obvPoints.length; j++) {
+                  this.ctx.lineTo(obvPoints[j].x, obvPoints[j].y);
+                }
+                this.ctx.stroke();
+              })();
+              obvPoints.length = 0;
+            }
           }
+        }
+        if (obvPoints.length > 0) {
+          smoothCurve ? this.drawSmoothCurve(obvPoints, this.ctx) : (() => {
+            this.ctx.beginPath();
+            this.ctx.moveTo(obvPoints[0].x, obvPoints[0].y);
+            for (let j = 1; j < obvPoints.length; j++) {
+              this.ctx.lineTo(obvPoints[j].x, obvPoints[j].y);
+            }
+            this.ctx.stroke();
+          })();
         }
       }
       colorIndex++;
@@ -857,70 +938,112 @@ class Chart {
       this.ctx.strokeStyle = '#000000';
       this.ctx.lineJoin = 'round';
       this.ctx.lineCap = 'round';
-      let prevAvg: { x: number; y: number } | null = null;
+      this.ctx.lineWidth = 2;
+      const avgPoints: Array<{ x: number; y: number }> = [];
       for (let i = 0; i < avgData.length; i++) {
         const value = avgData[i];
         if (!isNaN(value)) {
           const x = this.getX(i, sortedTimestamps.length);
           const y = this.getYForPricePanel(value, minY, maxY, priceAreaHeight, pricePanelTop);
-          if (prevAvg) {
-            this.ctx.lineWidth = 2;
-            this.ctx.beginPath();
-            this.ctx.moveTo(prevAvg.x, prevAvg.y);
-            this.ctx.lineTo(x, y);
-            this.ctx.stroke();
-          }
-          prevAvg = { x, y };
+          avgPoints.push({ x, y });
         } else {
-          prevAvg = null;
+          if (avgPoints.length > 0) {
+            smoothCurve ? this.drawSmoothCurve(avgPoints, this.ctx) : (() => {
+              this.ctx.beginPath();
+              this.ctx.moveTo(avgPoints[0].x, avgPoints[0].y);
+              for (let j = 1; j < avgPoints.length; j++) {
+                this.ctx.lineTo(avgPoints[j].x, avgPoints[j].y);
+              }
+              this.ctx.stroke();
+            })();
+            avgPoints.length = 0;
+          }
         }
+      }
+      if (avgPoints.length > 0) {
+        smoothCurve ? this.drawSmoothCurve(avgPoints, this.ctx) : (() => {
+          this.ctx.beginPath();
+          this.ctx.moveTo(avgPoints[0].x, avgPoints[0].y);
+          for (let j = 1; j < avgPoints.length; j++) {
+            this.ctx.lineTo(avgPoints[j].x, avgPoints[j].y);
+          }
+          this.ctx.stroke();
+        })();
       }
 
       // Volume 평균값 라인
       if (showVolume) {
         this.ctx.strokeStyle = '#000000';
-        let prevVolAvg: { x: number; y: number } | null = null;
+        this.ctx.lineWidth = 2;
+        const avgVolPoints: Array<{ x: number; y: number }> = [];
         for (let i = 0; i < avgVolData.length; i++) {
           const value = avgVolData[i];
           if (!isNaN(value)) {
             const x = this.getX(i, sortedTimestamps.length);
             const clampedValue = Math.max(0, Math.min(100, value));
             const y = volumePanelTop + volumeAreaHeight - (clampedValue / 100) * volumeAreaHeight;
-            if (prevVolAvg) {
-              this.ctx.lineWidth = 2;
-              this.ctx.beginPath();
-              this.ctx.moveTo(prevVolAvg.x, prevVolAvg.y);
-              this.ctx.lineTo(x, y);
-              this.ctx.stroke();
-            }
-            prevVolAvg = { x, y };
+            avgVolPoints.push({ x, y });
           } else {
-            prevVolAvg = null;
+            if (avgVolPoints.length > 0) {
+              smoothCurve ? this.drawSmoothCurve(avgVolPoints, this.ctx) : (() => {
+                this.ctx.beginPath();
+                this.ctx.moveTo(avgVolPoints[0].x, avgVolPoints[0].y);
+                for (let j = 1; j < avgVolPoints.length; j++) {
+                  this.ctx.lineTo(avgVolPoints[j].x, avgVolPoints[j].y);
+                }
+                this.ctx.stroke();
+              })();
+              avgVolPoints.length = 0;
+            }
           }
+        }
+        if (avgVolPoints.length > 0) {
+          smoothCurve ? this.drawSmoothCurve(avgVolPoints, this.ctx) : (() => {
+            this.ctx.beginPath();
+            this.ctx.moveTo(avgVolPoints[0].x, avgVolPoints[0].y);
+            for (let j = 1; j < avgVolPoints.length; j++) {
+              this.ctx.lineTo(avgVolPoints[j].x, avgVolPoints[j].y);
+            }
+            this.ctx.stroke();
+          })();
         }
       }
 
       // OBV 평균값 라인
       if (showObv) {
         this.ctx.strokeStyle = '#000000';
-        let prevObvAvg: { x: number; y: number } | null = null;
+        this.ctx.lineWidth = 2;
+        const avgObvPoints: Array<{ x: number; y: number }> = [];
         for (let i = 0; i < avgObvData.length; i++) {
           const value = avgObvData[i];
           if (!isNaN(value)) {
             const x = this.getX(i, sortedTimestamps.length);
             const clampedValue = Math.max(0, Math.min(100, value));
             const y = obvPanelTop + obvAreaHeight - (clampedValue / 100) * obvAreaHeight;
-            if (prevObvAvg) {
-              this.ctx.lineWidth = 2;
-              this.ctx.beginPath();
-              this.ctx.moveTo(prevObvAvg.x, prevObvAvg.y);
-              this.ctx.lineTo(x, y);
-              this.ctx.stroke();
-            }
-            prevObvAvg = { x, y };
+            avgObvPoints.push({ x, y });
           } else {
-            prevObvAvg = null;
+            if (avgObvPoints.length > 0) {
+              smoothCurve ? this.drawSmoothCurve(avgObvPoints, this.ctx) : (() => {
+                this.ctx.beginPath();
+                this.ctx.moveTo(avgObvPoints[0].x, avgObvPoints[0].y);
+                for (let j = 1; j < avgObvPoints.length; j++) {
+                  this.ctx.lineTo(avgObvPoints[j].x, avgObvPoints[j].y);
+                }
+                this.ctx.stroke();
+              })();
+              avgObvPoints.length = 0;
+            }
           }
+        }
+        if (avgObvPoints.length > 0) {
+          smoothCurve ? this.drawSmoothCurve(avgObvPoints, this.ctx) : (() => {
+            this.ctx.beginPath();
+            this.ctx.moveTo(avgObvPoints[0].x, avgObvPoints[0].y);
+            for (let j = 1; j < avgObvPoints.length; j++) {
+              this.ctx.lineTo(avgObvPoints[j].x, avgObvPoints[j].y);
+            }
+            this.ctx.stroke();
+          })();
         }
       }
     }

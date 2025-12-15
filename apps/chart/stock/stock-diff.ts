@@ -125,6 +125,7 @@ async function main() {
     showAverage: true,
     showVolume: true,
     showObv: true,
+    smoothCurve: true
   });
 
   console.log(`Chart saved: dist/chart/${chartName}_overlay_chart.png`);
