@@ -1,7 +1,5 @@
-import { getData, Interval } from './Stock';
-import { readFileSync } from 'fs';
-import { parse } from 'csv-parse/sync';
-import { Chart, ChartData, TradePoint} from '../chart/Chart';
+import { Chart, TradePoint } from '../chart/Chart';
+import { StockLoader, StockData, Interval } from './StockLoader';
 
 interface StockConfig {
   symbol: string;
@@ -33,43 +31,28 @@ const SELL_QUANTITY = 100;
 const BB_PERIOD = 20;         // 볼린저 밴드 기간 (일반적으로 20)
 const STD_DEV_MULTIPLIER = 2; // 표준편차 배수 (일반적으로 2)
 
-const stockConfigs: { [key: string]: StockConfig } = {
-  'AAPL': { symbol: 'AAPL', period: PERIOD, interval: INTERVAL, commissionRate: COMMISSION_RATE, buyQuantity: BUY_QUANTITY, sellQuantity: SELL_QUANTITY, bbPeriod: BB_PERIOD, stdDevMultiplier: STD_DEV_MULTIPLIER },
-  'MSFT': { symbol: 'MSFT', period: PERIOD, interval: INTERVAL, commissionRate: COMMISSION_RATE, buyQuantity: BUY_QUANTITY, sellQuantity: SELL_QUANTITY, bbPeriod: BB_PERIOD, stdDevMultiplier: STD_DEV_MULTIPLIER },
-  'AMZN': { symbol: 'AMZN', period: PERIOD, interval: INTERVAL, commissionRate: COMMISSION_RATE, buyQuantity: BUY_QUANTITY, sellQuantity: SELL_QUANTITY, bbPeriod: BB_PERIOD, stdDevMultiplier: STD_DEV_MULTIPLIER },
-  'GOOGL': { symbol: 'GOOGL', period: PERIOD, interval: INTERVAL, commissionRate: COMMISSION_RATE, buyQuantity: BUY_QUANTITY, sellQuantity: SELL_QUANTITY, bbPeriod: BB_PERIOD, stdDevMultiplier: STD_DEV_MULTIPLIER },
-  'NVDA': { symbol: 'NVDA', period: PERIOD, interval: INTERVAL, commissionRate: COMMISSION_RATE, buyQuantity: BUY_QUANTITY, sellQuantity: SELL_QUANTITY, bbPeriod: BB_PERIOD, stdDevMultiplier: STD_DEV_MULTIPLIER },
-  'META': { symbol: 'META', period: PERIOD, interval: INTERVAL, commissionRate: COMMISSION_RATE, buyQuantity: BUY_QUANTITY, sellQuantity: SELL_QUANTITY, bbPeriod: BB_PERIOD, stdDevMultiplier: STD_DEV_MULTIPLIER },
-  'TSLA': { symbol: 'TSLA', period: PERIOD, interval: INTERVAL, commissionRate: COMMISSION_RATE, buyQuantity: BUY_QUANTITY, sellQuantity: SELL_QUANTITY, bbPeriod: BB_PERIOD, stdDevMultiplier: STD_DEV_MULTIPLIER },
-  'ORCL': { symbol: 'ORCL', period: PERIOD, interval: INTERVAL, commissionRate: COMMISSION_RATE, buyQuantity: BUY_QUANTITY, sellQuantity: SELL_QUANTITY, bbPeriod: BB_PERIOD, stdDevMultiplier: STD_DEV_MULTIPLIER },
-  'INTC': { symbol: 'INTC', period: PERIOD, interval: INTERVAL, commissionRate: COMMISSION_RATE, buyQuantity: BUY_QUANTITY, sellQuantity: SELL_QUANTITY, bbPeriod: BB_PERIOD, stdDevMultiplier: STD_DEV_MULTIPLIER },
-  'BABA': { symbol: 'BABA', period: PERIOD, interval: INTERVAL, commissionRate: COMMISSION_RATE, buyQuantity: BUY_QUANTITY, sellQuantity: SELL_QUANTITY, bbPeriod: BB_PERIOD, stdDevMultiplier: STD_DEV_MULTIPLIER },
-  'VMC': { symbol: 'VMC', period: PERIOD, interval: INTERVAL, commissionRate: COMMISSION_RATE, buyQuantity: BUY_QUANTITY, sellQuantity: SELL_QUANTITY, bbPeriod: BB_PERIOD, stdDevMultiplier: STD_DEV_MULTIPLIER },
-};
+// 커맨드라인 파라미터로 티커 받기
+const symbols: string[] = process.argv.slice(2).length > 0 
+  ? process.argv.slice(2) 
+  : ['AAPL', 'MSFT', 'AMZN', 'GOOGL', 'NVDA', 'META', 'TSLA', 'ORCL', 'INTC', 'BABA', 'VMC'];
 
-interface StockData extends ChartData {}
+const stockConfigs: { [key: string]: StockConfig } = {};
+symbols.forEach(symbol => {
+  stockConfigs[symbol] = { 
+    symbol, 
+    period: PERIOD, 
+    interval: INTERVAL, 
+    commissionRate: COMMISSION_RATE, 
+    buyQuantity: BUY_QUANTITY, 
+    sellQuantity: SELL_QUANTITY, 
+    bbPeriod: BB_PERIOD, 
+    stdDevMultiplier: STD_DEV_MULTIPLIER 
+  };
+});
 
 async function main(config: StockConfig) {
-  const file = await getData(config.symbol, { period: config.period, interval: config.interval });
-
-  function loadCsvToJson(filePath: string): StockData[] {
-    try {
-      const fileContent = readFileSync(filePath, 'utf-8');
-      const records = parse(fileContent, {
-        columns: true,
-        skip_empty_lines: true,
-        cast: true
-      });
-      return records as StockData[];
-    } catch (error) {
-      console.error('Error loading CSV:', (error as Error).message);
-      return [];
-    }
-  }
-
-  const stockData = loadCsvToJson(file);
-
-  console.log('Total records:', config.symbol, stockData.length);
+  const loader = new StockLoader(config.period, config.interval);
+  const stockData = await loader.loadStock(config.symbol);
 
   const middleBand = Chart.calculateSMA(stockData, config.bbPeriod);
   const stdDev = Chart.calculateStandardDeviation(stockData, config.bbPeriod, middleBand);

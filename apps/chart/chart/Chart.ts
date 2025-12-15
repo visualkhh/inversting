@@ -280,6 +280,155 @@ class Chart {
     }
     return stdDev;
   }
+
+  drawOverlayChart(dataMap: Map<string, ChartData[]>, filenameSuffix: string = '_overlay_chart.png', showAverage: boolean = true) {
+    const colors = ['#0000FF', '#FF0000', '#00AA00', '#FF00FF', '#00AAAA', '#AAAA00'];
+    
+    // 모든 타임스탬프 수집 및 정렬
+    const allTimestamps = new Set<string>();
+    dataMap.forEach(data => {
+      data.forEach(d => allTimestamps.add(d.timestamp));
+    });
+    const sortedTimestamps = Array.from(allTimestamps).sort();
+
+    // 각 주식의 데이터를 타임스탬프 기준으로 맵핑
+    const timestampDataMap = new Map<string, Map<string, number>>();
+    dataMap.forEach((data, symbol) => {
+      const priceMap = new Map<string, number>();
+      data.forEach(d => {
+        priceMap.set(d.timestamp, d.close);
+      });
+      timestampDataMap.set(symbol, priceMap);
+    });
+
+    // 각 주식을 0-100% 범위로 정규화 (타임스탬프 기준)
+    const normalizedDataMap = new Map<string, Map<string, number>>();
+    timestampDataMap.forEach((priceMap, symbol) => {
+      const prices = Array.from(priceMap.values());
+      const minPrice = Math.min(...prices);
+      const maxPrice = Math.max(...prices);
+      const range = maxPrice - minPrice;
+      
+      const normalizedMap = new Map<string, number>();
+      priceMap.forEach((price, timestamp) => {
+        const normalized = range === 0 ? 50 : ((price - minPrice) / range) * 100;
+        normalizedMap.set(timestamp, normalized);
+      });
+      normalizedDataMap.set(symbol, normalizedMap);
+    });
+
+    const minY = 0;
+    const maxY = 100;
+
+    // X축 라벨용 데이터 생성
+    const chartData: ChartData[] = sortedTimestamps.map(ts => ({
+      timestamp: ts,
+      open: 0,
+      high: 0,
+      low: 0,
+      close: 0,
+      volume: 0,
+      obv: 0
+    }));
+
+    this.drawAxes(minY, maxY);
+    this.drawXAxisLabelsAndGrid(chartData);
+
+    // Y축 라벨을 % 형식으로 다시 그리기
+    this.ctx.fillStyle = '#000000';
+    this.ctx.font = '12px Arial';
+    for (let j = 0; j <= 5; j++) {
+      const percent = (100 / 5) * j;
+      this.ctx.fillText(`${percent.toFixed(0)}%`, this.padding - 40, this.getY(percent, minY, maxY) + 5);
+    }
+
+    // 각 주식의 정규화된 라인 그리기 (얇게)
+    let colorIndex = 0;
+    const symbols: string[] = [];
+    normalizedDataMap.forEach((normalizedMap, symbol) => {
+      symbols.push(symbol);
+      this.ctx.strokeStyle = colors[colorIndex % colors.length];
+      this.ctx.lineWidth = 1;
+      this.ctx.beginPath();
+      
+      let firstPoint = true;
+      sortedTimestamps.forEach((timestamp, i) => {
+        const value = normalizedMap.get(timestamp);
+        if (value !== undefined) {
+          const x = this.getX(i, sortedTimestamps.length);
+          const y = this.getY(value, minY, maxY);
+          if (firstPoint) {
+            this.ctx.moveTo(x, y);
+            firstPoint = false;
+          } else {
+            this.ctx.lineTo(x, y);
+          }
+        }
+      });
+      this.ctx.stroke();
+      colorIndex++;
+    });
+
+    // 평균값 그리기 (옵션)
+    if (showAverage) {
+      // 정규화된 값들의 평균 계산 (타임스탬프 기준)
+      const avgData: number[] = [];
+      sortedTimestamps.forEach(timestamp => {
+        let sum = 0;
+        let count = 0;
+        normalizedDataMap.forEach(normalizedMap => {
+          const value = normalizedMap.get(timestamp);
+          if (value !== undefined) {
+            sum += value;
+            count++;
+          }
+        });
+        avgData.push(count > 0 ? sum / count : NaN);
+      });
+
+      // 평균값 라인 (찐한 검은색)
+      this.ctx.strokeStyle = '#000000';
+      this.ctx.lineWidth = 3;
+      this.ctx.beginPath();
+      let firstAvgPoint = true;
+      avgData.forEach((value, i) => {
+        if (!isNaN(value)) {
+          const x = this.getX(i, sortedTimestamps.length);
+          const y = this.getY(value, minY, maxY);
+          if (firstAvgPoint) {
+            this.ctx.moveTo(x, y);
+            firstAvgPoint = false;
+          } else {
+            this.ctx.lineTo(x, y);
+          }
+        }
+      });
+      this.ctx.stroke();
+    }
+
+    // 범례 그리기
+    const legendX = this.width - this.padding - 150;
+    const legendY = this.padding + 20;
+    this.ctx.font = '14px Arial';
+    
+    colorIndex = 0;
+    symbols.forEach((symbol, idx) => {
+      this.ctx.fillStyle = colors[colorIndex % colors.length];
+      this.ctx.fillRect(legendX, legendY + idx * 25, 20, 3);
+      this.ctx.fillStyle = '#000000';
+      this.ctx.fillText(symbol, legendX + 30, legendY + idx * 25 + 5);
+      colorIndex++;
+    });
+
+    // 평균 범례 (옵션)
+    if (showAverage) {
+      this.ctx.fillStyle = '#000000';
+      this.ctx.fillRect(legendX, legendY + symbols.length * 25, 20, 3);
+      this.ctx.fillText('Average', legendX + 30, legendY + symbols.length * 25 + 5);
+    }
+
+    this.saveChart(filenameSuffix);
+  }
 }
 
 export { Chart, ChartData, TradePoint };
