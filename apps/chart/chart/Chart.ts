@@ -24,14 +24,17 @@ class Chart {
   private canvas: any;
   private ctx: CanvasRenderingContext2D;
   private symbol: string;
+  private dpiScale: number;
 
-  constructor(symbol: string, width: number = 1200, height: number = 600, padding: number = 50) {
+  constructor(symbol: string, width: number = 1200, height: number = 600, padding: number = 50, dpiScale: number = 2) {
     this.symbol = symbol;
     this.width = width;
     this.height = height;
     this.padding = padding;
-    this.canvas = createCanvas(this.width, this.height);
+    this.dpiScale = Math.max(1, dpiScale);
+    this.canvas = createCanvas(this.width * this.dpiScale, this.height * this.dpiScale);
     this.ctx = this.canvas.getContext('2d');
+    this.ctx.scale(this.dpiScale, this.dpiScale);
 
     // 배경색
     this.ctx.fillStyle = '#FFFFFF';
@@ -84,6 +87,9 @@ class Chart {
 
   private drawXAxisLabelsAndGrid(data: ChartData[]) {
     let lastDate = '';
+    let lastLabelX = -Infinity;
+    const minLabelGap = 80; // px 간격 기준으로 라벨 간소화
+    const yAxis = this.height - this.padding;
     for (let i = 0; i < data.length; i++) {
       const currentData = data[i];
       const date = new Date(currentData.timestamp);
@@ -92,11 +98,8 @@ class Chart {
       // 일자 변경 시 라벨 및 점선 추가
       if (currentDate !== lastDate) {
         const x = this.getX(i, data.length);
-        this.ctx.fillStyle = '#000000';
-        this.ctx.font = '12px Arial';
-        this.ctx.fillText(currentDate, x - 20, this.height - this.padding + 20);
 
-        // 점선 그리기
+        // 점선 그리기 (기존 유지)
         this.ctx.strokeStyle = '#CCCCCC';
         this.ctx.setLineDash([2, 2]); // 점선 설정
         this.ctx.beginPath();
@@ -105,20 +108,35 @@ class Chart {
         this.ctx.stroke();
         this.ctx.setLineDash([]); // 점선 해제
 
+        // 라벨은 일정 픽셀 간격 이상일 때만 표기 (기울여서 표시)
+        if (x - lastLabelX >= minLabelGap) {
+          this.ctx.save();
+          this.ctx.fillStyle = '#000000';
+          this.ctx.font = '10px Arial';
+          this.ctx.translate(x + 2, yAxis + 14);
+          this.ctx.rotate((Math.PI / 180) * 45);
+          this.ctx.fillText(currentDate, 0, 0);
+          this.ctx.restore();
+          lastLabelX = x;
+        }
+
         lastDate = currentDate;
       }
     }
-    // 마지막 날짜 라벨이 누락될 경우 추가
+    // 마지막 날짜 라벨이 간격 때문에 누락되면 추가 시도
     if (data.length > 0) {
       const lastData = data[data.length - 1];
       const date = new Date(lastData.timestamp);
       const currentDate = `${date.getMonth() + 1}/${date.getDate()}`;
       const x = this.getX(data.length - 1, data.length);
-      this.ctx.fillStyle = '#000000';
-      this.ctx.font = '12px Arial';
-      // 이미 라벨이 그려져 있지 않다면 추가 (겹치지 않게)
-      if (currentDate !== lastDate) {
-        this.ctx.fillText(currentDate, x - 20, this.height - this.padding + 20);
+      if (x - lastLabelX >= minLabelGap * 0.6) { // 약간의 관대한 임계
+        this.ctx.save();
+        this.ctx.fillStyle = '#000000';
+        this.ctx.font = '10px Arial';
+        this.ctx.translate(x + 2, yAxis + 14);
+        this.ctx.rotate((Math.PI / 180) * 45);
+        this.ctx.fillText(currentDate, 0, 0);
+        this.ctx.restore();
       }
     }
   }
@@ -281,7 +299,35 @@ class Chart {
     return stdDev;
   }
 
-  drawOverlayChart(dataMap: Map<string, ChartData[]>, filenameSuffix: string = '_overlay_chart.png', showAverage: boolean = true) {
+  drawOverlayChart(
+    inputOrMap: { 
+      dataMap: Map<string, ChartData[]>; 
+      eventPoint?: { title: string; timestamp: string; color?: string } | Array<{ title: string; timestamp: string; color?: string }>; 
+      filenameSuffix?: string; 
+      showAverage?: boolean;
+    } | Map<string, ChartData[]>,
+    filenameSuffix: string = '_overlay_chart.png',
+    showAverage: boolean = true
+  ) {
+    // 입력 파라미터 호환 처리: 기존 (dataMap, filenameSuffix, showAverage) 또는 객체 입력
+    let dataMap: Map<string, ChartData[]>;
+    let eventPoints: Array<{ title: string; timestamp: string; color?: string }>; 
+    if (inputOrMap instanceof Map) {
+      dataMap = inputOrMap as Map<string, ChartData[]>;
+      eventPoints = []; // 이벤트 없음
+    } else {
+      const obj = inputOrMap as { dataMap: Map<string, ChartData[]>; eventPoint?: any; filenameSuffix?: string; showAverage?: boolean };
+      dataMap = obj.dataMap;
+      filenameSuffix = obj.filenameSuffix ?? filenameSuffix;
+      showAverage = obj.showAverage ?? showAverage;
+      if (!obj.eventPoint) {
+        eventPoints = [];
+      } else if (Array.isArray(obj.eventPoint)) {
+        eventPoints = obj.eventPoint;
+      } else {
+        eventPoints = [obj.eventPoint];
+      }
+    }
     const colors = ['#0000FF', '#FF0000', '#00AA00', '#FF00FF', '#00AAAA', '#AAAA00'];
     
     // 모든 타임스탬프 수집 및 정렬
@@ -334,6 +380,56 @@ class Chart {
     this.drawAxes(minY, maxY);
     this.drawXAxisLabelsAndGrid(chartData);
 
+    // 이벤트 마커 그리기 (X축 영역)
+    if (eventPoints && eventPoints.length > 0) {
+      const yAxis = this.height - this.padding;
+      const findNearestIndex = (ts: string): number => {
+        const exact = sortedTimestamps.indexOf(ts);
+        if (exact !== -1) return exact;
+        // 가까운 타임스탬프 탐색 (날짜 파싱 기준)
+        const target = new Date(ts).getTime();
+        let bestIdx = 0;
+        let bestDiff = Number.POSITIVE_INFINITY;
+        for (let i = 0; i < sortedTimestamps.length; i++) {
+          const t = new Date(sortedTimestamps[i]).getTime();
+          const diff = Math.abs(t - target);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestIdx = i;
+          }
+        }
+        return bestIdx;
+      };
+
+      eventPoints.forEach(evt => {
+        const idx = findNearestIndex(evt.timestamp);
+        const x = this.getX(idx, sortedTimestamps.length);
+        const color = evt.color || '#333333';
+
+        this.ctx.save();
+        this.ctx.strokeStyle = color;
+        this.ctx.fillStyle = color;
+        this.ctx.lineWidth = 1.5;
+        // 차트 영역 전체에 수직 실선 (이벤트 라인)
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, this.padding);
+        this.ctx.lineTo(x, this.height - this.padding);
+        this.ctx.stroke();
+        // 축 아래로 표시되는 틱
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, yAxis);
+        this.ctx.lineTo(x, yAxis + 10);
+        this.ctx.stroke();
+
+        // 라벨: 기울여서 충돌 줄이기
+        this.ctx.translate(x + 5, yAxis + 14);
+        this.ctx.rotate((Math.PI / 180) * 45);
+        this.ctx.font = 'bold 10px Arial';
+        this.ctx.fillText(evt.title, 0, 0);
+        this.ctx.restore();
+      });
+    }
+
     // Y축 라벨을 % 형식으로 다시 그리기
     this.ctx.fillStyle = '#000000';
     this.ctx.font = '12px Arial';
@@ -371,20 +467,93 @@ class Chart {
 
     // 평균값 그리기 (옵션)
     if (showAverage) {
-      // 정규화된 값들의 평균 계산 (타임스탬프 기준)
-      const avgData: number[] = [];
-      sortedTimestamps.forEach(timestamp => {
-        let sum = 0;
-        let count = 0;
-        normalizedDataMap.forEach(normalizedMap => {
-          const value = normalizedMap.get(timestamp);
-          if (value !== undefined) {
-            sum += value;
-            count++;
+      // 각 심볼의 시계열을 선형 보간하여 동일한 타임라인으로 맞춤
+      const interpolatedSeries: number[][] = [];
+
+      const timestampIndexMap = new Map<string, number>();
+      sortedTimestamps.forEach((ts, idx) => timestampIndexMap.set(ts, idx));
+
+      const interpolateLine = (normalizedMap: Map<string, number>): number[] => {
+        // known points: index -> value
+        const indices: number[] = [];
+        const values: number[] = [];
+        normalizedMap.forEach((val, ts) => {
+          const idx = timestampIndexMap.get(ts);
+          if (idx !== undefined) {
+            indices.push(idx);
+            values.push(val);
           }
         });
-        avgData.push(count > 0 ? sum / count : NaN);
+        // 정렬 보장 (Map 순서가 임의일 수 있음)
+        const paired = indices.map((i, k) => ({ i, v: values[k] })).sort((a, b) => a.i - b.i);
+        const sortedIdx = paired.map(p => p.i);
+        const sortedVal = paired.map(p => p.v);
+
+        const result = new Array<number>(sortedTimestamps.length).fill(NaN);
+        if (sortedIdx.length === 0) return result;
+
+        // 좌/우 외삽: 가장 좌측, 우측 구간은 최근 기울기 적용한 선형 외삽
+        // 내부 구간: 인접한 두 점 사이 선형 보간
+        // 왼쪽 외삽
+        for (let i = 0; i <= sortedIdx[0]; i++) {
+          if (i === sortedIdx[0]) {
+            result[i] = sortedVal[0];
+          } else {
+            // 첫 두 점의 기울기로 외삽 (첫 점 이전)
+            const i0 = sortedIdx[0];
+            const i1 = sortedIdx[1] !== undefined ? sortedIdx[1] : sortedIdx[0];
+            const v0 = sortedVal[0];
+            const v1 = sortedVal[1] !== undefined ? sortedVal[1] : sortedVal[0];
+            const slope = i1 === i0 ? 0 : (v1 - v0) / (i1 - i0);
+            result[i] = v0 + slope * (i - i0);
+          }
+        }
+        // 내부 보간
+        for (let seg = 0; seg < sortedIdx.length - 1; seg++) {
+          const i0 = sortedIdx[seg];
+          const i1 = sortedIdx[seg + 1];
+          const v0 = sortedVal[seg];
+          const v1 = sortedVal[seg + 1];
+          const slope = (v1 - v0) / (i1 - i0);
+          for (let i = i0; i <= i1; i++) {
+            const t = i - i0;
+            result[i] = v0 + slope * t;
+          }
+        }
+        // 오른쪽 외삽
+        const last = sortedIdx[sortedIdx.length - 1];
+        const prev = sortedIdx[sortedIdx.length - 2] !== undefined ? sortedIdx[sortedIdx.length - 2] : last;
+        const vLast = sortedVal[sortedVal.length - 1];
+        const vPrev = sortedVal[sortedVal.length - 2] !== undefined ? sortedVal[sortedVal.length - 2] : vLast;
+        const slopeRight = last === prev ? 0 : (vLast - vPrev) / (last - prev);
+        for (let i = last; i < sortedTimestamps.length; i++) {
+          if (i === last) {
+            result[i] = vLast;
+          } else {
+            result[i] = vLast + slopeRight * (i - last);
+          }
+        }
+        return result;
+      };
+
+      normalizedDataMap.forEach((normalizedMap) => {
+        interpolatedSeries.push(interpolateLine(normalizedMap));
       });
+
+      // 타임스탬프별 평균 계산 (보간/외삽된 값 기반)
+      const avgData: number[] = new Array<number>(sortedTimestamps.length).fill(NaN);
+      for (let i = 0; i < sortedTimestamps.length; i++) {
+        let sum = 0;
+        let count = 0;
+        for (let s = 0; s < interpolatedSeries.length; s++) {
+          const v = interpolatedSeries[s][i];
+          if (!isNaN(v)) {
+            sum += v;
+            count++;
+          }
+        }
+        avgData[i] = count > 0 ? sum / count : NaN;
+      }
 
       // 평균값 라인 (찐한 검은색)
       this.ctx.strokeStyle = '#000000';
@@ -424,7 +593,7 @@ class Chart {
     if (showAverage) {
       this.ctx.fillStyle = '#000000';
       this.ctx.fillRect(legendX, legendY + symbols.length * 25, 20, 3);
-      this.ctx.fillText('Average', legendX + 30, legendY + symbols.length * 25 + 5);
+      this.ctx.fillText('Average (Interpolated)', legendX + 30, legendY + symbols.length * 25 + 5);
     }
 
     this.saveChart(filenameSuffix);
