@@ -401,20 +401,30 @@ class Chart {
 
     // 각 주식의 데이터를 타임스탬프 기준으로 맵핑
     const timestampDataMap = new Map<string, Map<string, number>>();
+    const highMapBySymbol = new Map<string, Map<string, number>>();
+    const lowMapBySymbol = new Map<string, Map<string, number>>();
     const volumeDataMap = new Map<string, Map<string, number>>();
     dataMap.forEach((data, symbol) => {
       const priceMap = new Map<string, number>();
+      const highMap = new Map<string, number>();
+      const lowMap = new Map<string, number>();
       const volMap = new Map<string, number>();
       data.forEach(d => {
         priceMap.set(d.timestamp, d.close);
+        highMap.set(d.timestamp, d.high);
+        lowMap.set(d.timestamp, d.low);
         volMap.set(d.timestamp, d.volume);
       });
       timestampDataMap.set(symbol, priceMap);
+      highMapBySymbol.set(symbol, highMap);
+      lowMapBySymbol.set(symbol, lowMap);
       volumeDataMap.set(symbol, volMap);
     });
 
     // 각 주식을 0-100% 범위로 정규화 (타임스탬프 기준)
     const normalizedDataMap = new Map<string, Map<string, number>>();
+    const normalizedHighMap = new Map<string, Map<string, number>>();
+    const normalizedLowMap = new Map<string, Map<string, number>>();
     const normalizedVolumeMap = new Map<string, Map<string, number>>();
     timestampDataMap.forEach((priceMap, symbol) => {
       const prices = Array.from(priceMap.values());
@@ -428,6 +438,22 @@ class Chart {
         normalizedMap.set(timestamp, normalized);
       });
       normalizedDataMap.set(symbol, normalizedMap);
+
+      // 고가/저가도 동일한 범위로 정규화
+      const hMap = highMapBySymbol.get(symbol) || new Map<string, number>();
+      const lMap = lowMapBySymbol.get(symbol) || new Map<string, number>();
+      const normHigh = new Map<string, number>();
+      const normLow = new Map<string, number>();
+      hMap.forEach((h, ts) => {
+        const nh = range === 0 ? 50 : ((h - minPrice) / range) * 100;
+        normHigh.set(ts, nh);
+      });
+      lMap.forEach((l, ts) => {
+        const nl = range === 0 ? 50 : ((l - minPrice) / range) * 100;
+        normLow.set(ts, nl);
+      });
+      normalizedHighMap.set(symbol, normHigh);
+      normalizedLowMap.set(symbol, normLow);
 
       // 거래량 정규화 (0~1)
       const volMap = volumeDataMap.get(symbol) || new Map<string, number>();
@@ -518,7 +544,7 @@ class Chart {
       this.ctx.fillText(`${percent.toFixed(0)}%`, this.padding - 40, this.getY(percent, minY, maxY) + 5);
     }
 
-    // 각 주식의 정규화된 라인 그리기 (얇게)
+    // 각 주식의 정규화된 라인 및 백그라운드 캔들 그리기
     let colorIndex = 0;
     const symbols: string[] = [];
     // 거래량 기반 두께 설정: 차트 높이의 1%를 최대 두께로 사용
@@ -533,6 +559,25 @@ class Chart {
 
       const priceSeries = interpolateSeries(normalizedMap);
       const volSeries = interpolateSeries(volMap);
+
+      // 백그라운드 캔들 (고가-저가 범위 시각화, 저채도/저투명)
+      const highSeries = interpolateSeries(normalizedHighMap.get(symbol) || new Map<string, number>());
+      const lowSeries = interpolateSeries(normalizedLowMap.get(symbol) || new Map<string, number>());
+      const candleFill = `${colors[colorIndex % colors.length]}22`; // 약 13% 투명도
+      this.ctx.fillStyle = candleFill;
+      // 더 얇은 캔들 폭: 간격의 25% 정도, 최소 1px
+      const candleWidth = Math.max(1, (this.width - this.padding * 2) / sortedTimestamps.length * 0.25);
+      for (let i = 0; i < sortedTimestamps.length; i++) {
+        const hi = highSeries[i];
+        const lo = lowSeries[i];
+        if (!isNaN(hi) && !isNaN(lo)) {
+          const x = this.getX(i, sortedTimestamps.length);
+          const yHigh = this.getY(hi, minY, maxY);
+          const yLow = this.getY(lo, minY, maxY);
+          const h = Math.max(1, yLow - yHigh);
+          this.ctx.fillRect(x - candleWidth / 2, yHigh, candleWidth, h);
+        }
+      }
 
       let prevPoint: { x: number; y: number } | null = null;
       let prevStroke = 1;
@@ -565,15 +610,22 @@ class Chart {
     if (showAverage) {
       // 각 심볼의 시계열을 선형 보간하여 동일한 타임라인으로 맞춤
       const interpolatedSeries: number[][] = [];
+      const interpolatedVolSeries: number[][] = [];
       normalizedDataMap.forEach((normalizedMap) => {
         interpolatedSeries.push(interpolateSeries(normalizedMap));
+      });
+      normalizedVolumeMap.forEach((volMap) => {
+        interpolatedVolSeries.push(interpolateSeries(volMap));
       });
 
       // 타임스탬프별 평균 계산 (보간/외삽된 값 기반)
       const avgData: number[] = new Array<number>(sortedTimestamps.length).fill(NaN);
+      const avgVolData: number[] = new Array<number>(sortedTimestamps.length).fill(NaN);
       for (let i = 0; i < sortedTimestamps.length; i++) {
         let sum = 0;
         let count = 0;
+        let volSum = 0;
+        let volCount = 0;
         for (let s = 0; s < interpolatedSeries.length; s++) {
           const v = interpolatedSeries[s][i];
           if (!isNaN(v)) {
@@ -581,27 +633,44 @@ class Chart {
             count++;
           }
         }
+        for (let s = 0; s < interpolatedVolSeries.length; s++) {
+          const vv = interpolatedVolSeries[s][i];
+          if (!isNaN(vv)) {
+            volSum += vv;
+            volCount++;
+          }
+        }
         avgData[i] = count > 0 ? sum / count : NaN;
+        avgVolData[i] = volCount > 0 ? volSum / volCount : NaN;
       }
 
       // 평균값 라인 (찐한 검은색)
       this.ctx.strokeStyle = '#000000';
-      this.ctx.lineWidth = 3;
-      this.ctx.beginPath();
-      let firstAvgPoint = true;
-      avgData.forEach((value, i) => {
+      this.ctx.lineJoin = 'round';
+      this.ctx.lineCap = 'round';
+      let prevAvg: { x: number; y: number } | null = null;
+      let prevStroke = 2.5;
+      for (let i = 0; i < avgData.length; i++) {
+        const value = avgData[i];
         if (!isNaN(value)) {
           const x = this.getX(i, sortedTimestamps.length);
           const y = this.getY(value, minY, maxY);
-          if (firstAvgPoint) {
-            this.ctx.moveTo(x, y);
-            firstAvgPoint = false;
-          } else {
+          const volNorm = avgVolData[i];
+          const rawStroke = !isNaN(volNorm) ? Math.max(1.5, volNorm * maxStrokeByVolume) : 1.5;
+          const strokeWidth = prevAvg ? (prevStroke * 0.5 + rawStroke * 0.5) : rawStroke;
+          if (prevAvg) {
+            this.ctx.lineWidth = strokeWidth;
+            this.ctx.beginPath();
+            this.ctx.moveTo(prevAvg.x, prevAvg.y);
             this.ctx.lineTo(x, y);
+            this.ctx.stroke();
           }
+          prevAvg = { x, y };
+          prevStroke = strokeWidth;
+        } else {
+          prevAvg = null;
         }
-      });
-      this.ctx.stroke();
+      }
     }
 
     // 범례 그리기
