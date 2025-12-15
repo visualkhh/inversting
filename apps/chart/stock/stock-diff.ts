@@ -33,7 +33,7 @@ const skhynixTicker = '000660.KS';
 // 비교할 주식 티커 (파라미터로 받을 수 있도록)
 const symbols: string[] = process.argv.slice(2).length > 0 
   ? process.argv.slice(2) 
-  : [samsungTicker, skhynixTicker];
+  : [broadcomTicker, micronTicker,samsungTicker, skhynixTicker];
 
 // ---- 간단 계량/진단 헬퍼 ----
 const getSortedDates = (dataMap: Map<string, any[]>): string[] => {
@@ -128,8 +128,8 @@ const ols = (X: number[][], y: number[]): number[] | null => {
 
 async function main() {
   // 날짜 범위 지정 방식
-  const from = '2025-10-01';
-  const to = '2025-12-31';
+  const from = '2025-09-01';
+  const to = '2025-12-16';
   const loader = new StockLoader({ 
     from,
     to,
@@ -154,60 +154,87 @@ async function main() {
   const chartName = symbols.join('_vs_');
   // 고해상도 렌더링을 위해 dpiScale 적용 (예: 3)
   const overlayChart = new Chart(chartName, 1200, 600, 50, 3);
-  // 2025 이벤트 마킹 (CPI/NFP/FOMC)
-  const cpiColor = '#5bc0de';
-  const nfpColor = '#5cb85c';
-  const fomcColor = '#d9534f';
-  const rateCutColor = '#f0ad4e';
+  
+  // 이벤트 컬러
+  const earningsColor = '#022fc5'; // 실적발표 (빨강)
+  const nfpColor = '#5cb85c'; // NFP/고용 (초록)
+  const fomcColor = '#b10606'; // FOMC/금리 (진빨강)
+  const rateCutColor = '#f0ad4e'; // 금리인상/기타 (주황)
 
-  const cpiEvents = [
-    // { title: '1월 CPI', timestamp: '2025-02-13', color: cpiColor },
-    // { title: '2월 CPI', timestamp: '2025-03-12', color: cpiColor },
-    // { title: '3월 CPI', timestamp: '2025-04-10', color: cpiColor },
-    // { title: '4월 CPI', timestamp: '2025-05-14', color: cpiColor },
-    // { title: '5월 CPI', timestamp: '2025-06-11', color: cpiColor },
-    // { title: '6월 CPI', timestamp: '2025-07-16', color: cpiColor },
-    // { title: '7월 CPI', timestamp: '2025-08-13', color: cpiColor },
-    // { title: '8월 CPI', timestamp: '2025-09-11', color: cpiColor },
-    // { title: '9월 CPI', timestamp: '2025-10-15', color: cpiColor },
-    // { title: '10월 CPI', timestamp: '2025-11-13', color: cpiColor },
-    // { title: '11월 CPI', timestamp: '2025-12-10', color: cpiColor },
-  ];
+  // ====== 2025년 기업 실적발표 이벤트 ======
+  const earningsEvents: { [key: string]: Array<{ title: string; timestamp: string; color: string }> } = {
+    // 브로드컴 (AVGO)
+    // 'AVGO': [
+    //   { title: 'AVGO FY25 Q4', timestamp: '2025-12-11', color: earningsColor },
+    // ],
+    // // 엔비디아 (NVDA)
+    // 'NVDA': [
+    //   { title: 'NVDA FY25 Q4', timestamp: '2025-02-26', color: earningsColor },
+    //   { title: 'NVDA FY26 Q1', timestamp: '2025-05-28', color: earningsColor },
+    //   { title: 'NVDA FY26 Q2', timestamp: '2025-08-27', color: earningsColor },
+    // ],
+    // // 인텔 (INTC) - 1·4·7·10월 말 패턴
+    // 'INTC': [
+    //   { title: 'INTC 2025 Q4', timestamp: '2025-01-31', color: earningsColor },
+    //   { title: 'INTC 2025 Q1', timestamp: '2025-04-30', color: earningsColor },
+    //   { title: 'INTC 2025 Q2', timestamp: '2025-07-31', color: earningsColor },
+    //   { title: 'INTC 2025 Q3', timestamp: '2025-10-31', color: earningsColor },
+    // ],
+    // // AMD - 1·4·7·10월 말 패턴
+    // 'AMD': [
+    //   { title: 'AMD 2025 Q4', timestamp: '2025-01-31', color: earningsColor },
+    //   { title: 'AMD 2025 Q1', timestamp: '2025-04-30', color: earningsColor },
+    //   { title: 'AMD 2025 Q2', timestamp: '2025-07-31', color: earningsColor },
+    //   { title: 'AMD 2025 Q3', timestamp: '2025-10-31', color: earningsColor },
+    // ],
+    // 마이크론 (MU) - 회계연도 8월말 기준, 6월/9월 말
+    'MU': [
+      { title: 'MU FY25 Q3', timestamp: '2025-09-24', color: earningsColor },
+      { title: 'MU FY25 Q4', timestamp: '2025-12-18', color: earningsColor },
+    ],
+    // 오라클 (ORCL) - 회계연도 5월말 기준, 3·6·9·12월 중순
+    // 'ORCL': [
+    //   { title: 'ORCL FY25 Q3', timestamp: '2025-03-15', color: earningsColor },
+    //   { title: 'ORCL FY25 Q4', timestamp: '2025-06-15', color: earningsColor },
+    //   { title: 'ORCL FY26 Q1', timestamp: '2025-09-15', color: earningsColor },
+    //   { title: 'ORCL FY26 Q2', timestamp: '2025-12-15', color: earningsColor },
+    // ],
+    // TSMC (TSM) - 4월/7월/10월 중순
+    // '2330.TW': [
+    //   { title: 'TSMC 2025 Q1', timestamp: '2025-04-18', color: earningsColor },
+    //   { title: 'TSMC 2025 Q2', timestamp: '2025-07-18', color: earningsColor },
+    //   { title: 'TSMC 2025 Q3', timestamp: '2025-10-17', color: earningsColor },
+    // ],
+    // // 삼성전자 - 1월/4월/7월 말
+    // '005930.KS': [
+    //   { title: 'Samsung 2024 Q4', timestamp: '2025-01-31', color: earningsColor },
+    //   { title: 'Samsung 2025 Q1', timestamp: '2025-04-30', color: earningsColor },
+    //   { title: 'Samsung 2025 Q2', timestamp: '2025-07-30', color: earningsColor },
+    // ],
+    // // SK하이닉스 - 1월/4월/7월 말
+    // '000660.KS': [
+    //   { title: 'SK Hynix 2024 Q4', timestamp: '2025-01-31', color: earningsColor },
+    //   { title: 'SK Hynix 2025 Q1', timestamp: '2025-04-30', color: earningsColor },
+    //   { title: 'SK Hynix 2025 Q2', timestamp: '2025-07-30', color: earningsColor },
+    // ],
+  };
 
-  const nfpEvents = [
-    // { title: '1월 고용(NFP)', timestamp: '2025-01-03', color: nfpColor },
-    // { title: '2월 고용(NFP)', timestamp: '2025-02-07', color: nfpColor },
-    // { title: '3월 고용(NFP)', timestamp: '2025-03-07', color: nfpColor },
-    // { title: '4월 고용(NFP)', timestamp: '2025-04-04', color: nfpColor },
-    // { title: '5월 고용(NFP)', timestamp: '2025-05-02', color: nfpColor },
-    // { title: '6월 고용(NFP)', timestamp: '2025-06-06', color: nfpColor },
-    // { title: '7월 고용(NFP)', timestamp: '2025-07-03', color: nfpColor },
-    // { title: '8월 고용(NFP)', timestamp: '2025-08-01', color: nfpColor },
-    // { title: '9월 고용(NFP)', timestamp: '2025-09-05', color: nfpColor },
-    // { title: '10월 고용(NFP)', timestamp: '2025-10-03', color: nfpColor },
-    // { title: '11월 고용(NFP)', timestamp: '2025-11-07', color: nfpColor },
-    // { title: '12월 고용(NFP)', timestamp: '2025-12-05', color: nfpColor },
-  ];
-
-  const fomcEvents = [
-    // { title: '1월 FOMC', timestamp: '2025-01-29', color: fomcColor },
-    // { title: '3월 FOMC', timestamp: '2025-03-19', color: fomcColor },
-    // { title: '5월 FOMC', timestamp: '2025-05-07', color: fomcColor },
-    // { title: '6월 FOMC', timestamp: '2025-06-18', color: fomcColor },
-    // { title: '7월 FOMC', timestamp: '2025-07-30', color: fomcColor },
-    // { title: '9월 FOMC', timestamp: '2025-09-17', color: fomcColor },
-    // { title: '11월 FOMC', timestamp: '2025-11-05', color: fomcColor },
-    // { title: '12월 FOMC', timestamp: '2025-12-17', color: fomcColor },
-  ];
-
+  // 현재 심볼의 실적발표 이벤트만 수집
+  const symbolEarningsEvents: Array<{ title: string; timestamp: string; color: string }> = [];
+  symbols.forEach(sym => {
+    if (earningsEvents[sym]) {
+      symbolEarningsEvents.push(...earningsEvents[sym]);
+    }
+  });
+  
+  // ====== 2024~2025년 거시경제 이벤트 ======
+  
+  // 2024년 금리 인하 이벤트
   const rateCutEvents = [
-    { title: '금리 인하(-50bp)', timestamp: '2024-09-18', color: rateCutColor },
-    { title: '금리 인하(-25bp)', timestamp: '2024-11-07', color: rateCutColor },
-    { title: '금리 인하(-25bp)', timestamp: '2024-12-18', color: rateCutColor },
-    { title: '금리 인하(-25bp)', timestamp: '2025-12-10', color: rateCutColor },
+    { title: '금리 인하(-25bp)', timestamp: '2025-12-11', color: rateCutColor },
   ];
 
-  const events = [...cpiEvents, ...nfpEvents, ...fomcEvents, ...rateCutEvents];
+  const events = [...rateCutEvents, ...symbolEarningsEvents];
   const eventDateSet = new Set(events.map(e => e.timestamp));
 
   // ---------- 계량/진단: 모멘텀+변동성+이벤트 회귀, 롤링 상관, 레짐 ----------
@@ -357,10 +384,22 @@ async function main() {
     dataMap: dateOnlyDataMap,
     eventPoint: events,
     filenameSuffix: '_overlay_chart.png',
+    imageHeight: 1000,
+    imageWidth: 2000,
+    lineWidth: 1,
+    averageLineWidth: 2,
+    // eventLineWidth: 7,
+    eventLabelSize: 15,
+    fontSize: 20,
+    xAxisLabelSize: 10,
+    yAxisLabelSize: 10,
+    legendFontSize: 30,
+    xAxisWidth: 50,  // X축 영역 폭 (하단)
+    yAxisWidth: 50,  // Y축 영역 폭 (좌측)
     showAverage: true,
-    showVolume: true,
-    showObv: true,
-    smoothCurve: true
+    // showVolume: true,
+    // showObv: true,
+    // smoothCurve: true
   });
 
   console.log(`Chart saved: dist/chart/${chartName}_overlay_chart.png`);

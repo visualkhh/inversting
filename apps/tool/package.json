@@ -127,15 +127,12 @@
     "typeorm": "^0.3.21",
     "sharp": "^0.33.4",
     "cheerio": "^1.1.2",
-    "playwright": "^1.54.1"
-  },
-  "peerDependencies": {
-    "@dooboostore/app-system": "workspace:*",
+    "playwright": "^1.54.1",
     "@dooboostore/core": "workspace:*",
     "@dooboostore/core-node": "workspace:*",
     "@dooboostore/core-web": "workspace:*",
     "@dooboostore/dom-render": "workspace:*",
-    "@dooboostore/lib-core": "workspace:*",
+    "@dooboostore/lib-node": "workspace:*",
     "@dooboostore/lib-web": "workspace:*",
     "@dooboostore/simple-boot": "workspace:*",
     "@dooboostore/simple-boot-front": "workspace:*",

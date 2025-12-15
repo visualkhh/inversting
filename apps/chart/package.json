@@ -1,5 +1,5 @@
 {
-  "name": "lazycollect",
+  "name": "chart",
   "version": "1.0.0",
   "license": "MIT",
   "description": "front end SPA frameworks SSR",
@@ -111,7 +111,6 @@
     "canvas": "^3.1.0"
   },
   "peerDependencies": {
-
     "jsdom": "^26.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"

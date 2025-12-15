@@ -195,9 +195,10 @@ export class StockLoader {
         cast: true
       });
       // close 가격이 0이거나 유효하지 않은 데이터 필터링
-      return (records as StockData[]).filter(record => 
-        record.close && record.close > 0
-      );
+      return (records as StockData[]).filter(record => {
+        const close = Number(record.close);
+        return !isNaN(close) && close > 0;
+      });
     } catch (error) {
       console.error('Error loading CSV:', (error as Error).message);
       return [];

@@ -17,7 +17,17 @@
     "apps/**"
   ],
   "pnpm": {
-    "shared-workspace-lockfile": true
+    "shared-workspace-lockfile": true,
+    "ignoredBuiltDependencies": [
+      "@tensorflow/tfjs-node",
+      "bufferutil",
+      "canvas",
+      "core-js",
+      "esbuild",
+      "puppeteer",
+      "sharp",
+      "utf-8-validate"
+    ]
   },
   "keywords": [],
   "author": "",
@@ -25,7 +35,5 @@
   "devDependencies": {
     "pm2": "^6.0.6",
     "prettier": "^3.3.3"
-  },
-  "dependencies": {
   }
 }
