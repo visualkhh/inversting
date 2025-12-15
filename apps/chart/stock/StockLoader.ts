@@ -194,14 +194,24 @@ export class StockLoader {
         skip_empty_lines: true,
         cast: true
       });
-      // close 가격이 0이거나 유효하지 않은 데이터 필터링, timestamp에서 따옴표 제거
-      return (records as StockData[]).filter(record => {
-        const close = Number(record.close);
-        // timestamp에서 따옴표 제거
+
+      const toNumberOrNull = (v: any): number | null => {
+        if (v === undefined || v === null || v === '') return null;
+        const n = Number(v);
+        return isNaN(n) ? null : n;
+      };
+
+      return (records as StockData[]).map(record => {
         if (typeof record.timestamp === 'string') {
           record.timestamp = record.timestamp.replace(/"/g, '');
         }
-        return !isNaN(close) && close > 0;
+        record.open = toNumberOrNull(record.open) as any;
+        record.high = toNumberOrNull(record.high) as any;
+        record.low = toNumberOrNull(record.low) as any;
+        record.close = toNumberOrNull(record.close) as any;
+        record.volume = toNumberOrNull(record.volume) as any;
+        if (record.obv !== undefined) record.obv = toNumberOrNull(record.obv) as any;
+        return record;
       });
     } catch (error) {
       console.error('Error loading CSV:', (error as Error).message);

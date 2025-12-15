@@ -1418,15 +1418,14 @@ class Chart {
     dataMap.forEach((data, symbol) => {
       const points: { time: number; open: number; high: number; low: number; close: number }[] = [];
       data.forEach(d => {
-        // 유효한 데이터만 (close > 0)
+        const time = new Date(d.timestamp).getTime() / 1000; // unix 초 단위
+        allTimePoints.add(time); // 타임라인을 위해 모든 타임스탬프를 보존
         if (d.close && d.close > 0) {
-          const time = new Date(d.timestamp).getTime() / 1000; // unix 초 단위
-          allTimePoints.add(time);
           points.push({ 
             time, 
-            open: d.open, 
-            high: d.high, 
-            low: d.low, 
+            open: d.open ?? 0, 
+            high: d.high ?? d.close, 
+            low: d.low ?? d.close, 
             close: d.close 
           });
         }

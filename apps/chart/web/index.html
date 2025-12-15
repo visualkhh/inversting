@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Overlay Chart (Web)</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      font-family: Arial, sans-serif;
+      background: #ffffff;
+    }
+    #app {
+      width: 100%;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    #chart-container {
+      flex: 1;
+      position: relative;
+      padding: 0 8px;
+      overflow: hidden;
+    }
+    #chart {
+      width: 100%;
+      height: 100%;
+      display: block;
+      border: 0;
+    }
+    #status {
+      padding: 8px 12px;
+      font-size: 12px;
+      color: #333;
+      border-bottom: 1px solid #e5e5e5;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    #status label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+      color: #222;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="status">
+      <span id="status-text">Loading data…</span>
+      <label for="toggle-events" id="toggle-events-label">
+        <input type="checkbox" id="toggle-events" /> 이벤트 표시
+      </label>
+      <label for="toggle-candles" id="toggle-candles-label">
+        <input type="checkbox" id="toggle-candles" /> 캠들 표시
+      </label>
+      <label for="toggle-gaps" id="toggle-gaps-label">
+        <input type="checkbox" id="toggle-gaps" /> 빈곳 채우기
+      </label>
+    </div>
+    <div id="chart-container">
+      <canvas id="chart"></canvas>
+    </div>
+  </div>
+  <script src="bundle.js"></script>
+</body>
+</html>
