@@ -12,10 +12,11 @@ const nvidiaTicker = 'NVDA';
 const tsmcTicker = '2330.TW';
 const skhynixTicker = '000660.KS';
 // 기본 심볼 목록 (stock-diff와 동일)
-const symbols = [tsmcTicker, micronTicker, amdTicker, intelTicker, broadcomTicker];
+// const symbols = [tsmcTicker, micronTicker, amdTicker, intelTicker, broadcomTicker];
+const symbols = [micronTicker, skhynixTicker, samsungTicker];
 
 // 날짜 범위 (stock-diff와 동일)
-const from = '2025-10-01';
+const from = '2025-02-01';
 const to = '2025-12-16';
 
 async function main() {

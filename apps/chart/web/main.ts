@@ -176,19 +176,25 @@ function drawSimpleOverlayChart(
     return padding + ((time - minTime) / timeRange) * (width - padding * 2);
   };
 
+  // Price 그래프 영역: 상단 padding ~ actualHeight (하단 padding 없음)
+  const graphTop = padding;
+  const graphBottom = actualHeight;
+  const graphHeight = graphBottom - graphTop;
+
   const getY = (value: number, minVal: number, maxVal: number): number => {
     const range = maxVal - minVal || 1;
-    return actualHeight - padding - ((value - minVal) / range) * (actualHeight - padding * 2);
+    const normalizedValue = (value - minVal) / range;
+    return graphBottom - normalizedValue * graphHeight;
   };
 
   // 배경 (Price 영역만)
   ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, width, actualHeight);
 
-  // Price 영역 그리드 (10x10) - actualHeight 기준
+  // Price 영역 그리드 (10x10) - graphHeight 기준
   const gridDivisions = 10;
   const gridWidth = width - padding * 2;
-  const gridHeight = actualHeight - padding * 2;
+  const gridHeight = graphBottom - graphTop;
   const gridStepX = gridWidth / gridDivisions;
   const gridStepY = gridHeight / gridDivisions;
   
@@ -199,14 +205,14 @@ function drawSimpleOverlayChart(
   for (let i = 0; i <= gridDivisions; i++) {
     const x = padding + gridStepX * i;
     ctx.beginPath();
-    ctx.moveTo(x, padding);
-    ctx.lineTo(x, actualHeight - padding);
+    ctx.moveTo(x, graphTop);
+    ctx.lineTo(x, graphBottom);
     ctx.stroke();
   }
   
   // 가로 그리드선
   for (let i = 0; i <= gridDivisions; i++) {
-    const y = padding + gridStepY * i;
+    const y = graphTop + gridStepY * i;
     ctx.beginPath();
     ctx.moveTo(padding, y);
     ctx.lineTo(width - padding, y);
@@ -217,15 +223,15 @@ function drawSimpleOverlayChart(
   ctx.strokeStyle = '#000000';
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(padding, padding);
-  ctx.lineTo(padding, actualHeight - padding);
+  ctx.moveTo(padding, graphTop);
+  ctx.lineTo(padding, graphBottom);
   ctx.stroke();
   
   // X축 (Volume/OBV가 없을 때만 그리기)
   if (!showOBV) {
     ctx.beginPath();
-    ctx.moveTo(padding, actualHeight - padding);
-    ctx.lineTo(width - padding, actualHeight - padding);
+    ctx.moveTo(padding, graphBottom);
+    ctx.lineTo(width - padding, graphBottom);
     ctx.stroke();
   }
 
@@ -237,7 +243,7 @@ function drawSimpleOverlayChart(
     ctx.textBaseline = 'middle';
     for (let i = 0; i <= 5; i++) {
       const value = 100 - i * 20;
-      const y = padding + (i / 5) * (actualHeight - padding * 2);
+      const y = graphTop + (i / 5) * graphHeight;
       ctx.fillText(`${value}%`, padding - 10, y);
     }
   }
@@ -245,9 +251,7 @@ function drawSimpleOverlayChart(
   // 'Price' 세로 텍스트 (항상 표시)
   ctx.save();
   // Price 영역의 실제 중간 위치 계산
-  const priceAreaTop = padding;
-  const priceAreaBottom = actualHeight - padding;
-  const priceLabelY = (priceAreaTop + priceAreaBottom) / 2;
+  const priceLabelY = (graphTop + graphBottom) / 2;
   ctx.translate(15, priceLabelY);
   ctx.rotate(-Math.PI / 2);
   ctx.fillStyle = '#000000';
@@ -257,13 +261,13 @@ function drawSimpleOverlayChart(
   ctx.fillText('Price', 0, 0);
   ctx.restore();
 
-  // Price와 OBV 구분선 (OBV 활성화시) - actualHeight - padding 위치에
+  // Price와 OBV 구분선 (OBV 활성화시) - graphBottom 위치에
   if (showOBV) {
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(padding, actualHeight - padding);
-    ctx.lineTo(width - padding, actualHeight - padding);
+    ctx.moveTo(padding, graphBottom);
+    ctx.lineTo(width - padding, graphBottom);
     ctx.stroke();
   }
 
@@ -574,21 +578,27 @@ function drawVolumeChart(
   ctx.lineTo(width - padding, volumeTopY + gridHeight);
   ctx.stroke();
 
-  // 전체 데이터의 최대 볼륨 계산 (모든 티커가 동일한 스케일 사용)
-  let globalMaxVolume = 1;
-  dataMap.forEach((data) => {
-    const volumes = data.map(d => d.volume || 0);
-    const maxVol = Math.max(...volumes, 0);
-    if (maxVol > globalMaxVolume) {
-      globalMaxVolume = maxVol;
+  // 각 티커별 볼륨 min/max 계산 (각 티커가 자신의 스케일 사용)
+  const volumeMinMaxBySymbol = new Map<string, { min: number; max: number }>();
+  dataMap.forEach((data, symbol) => {
+    const volumes = data.map(d => d.volume || 0).filter(v => v > 0);
+    if (volumes.length > 0) {
+      volumeMinMaxBySymbol.set(symbol, {
+        min: Math.min(...volumes),
+        max: Math.max(...volumes)
+      });
     }
   });
-  const globalMinVolume = 0;
 
   // Volume 렌더링 (선 그래프)
   let colorIndex = 0;
   dataMap.forEach((data, symbol) => {
     const volumeColor = colors[colorIndex % colors.length];
+    const minMax = volumeMinMaxBySymbol.get(symbol);
+    if (!minMax) {
+      colorIndex++;
+      return;
+    }
     
     if (!hideLines) {
       ctx.strokeStyle = volumeColor;
@@ -605,7 +615,7 @@ function drawVolumeChart(
       if (time >= minTime && time <= maxTime) {
         const volume = data[i].volume || 0;
         const x = getX(time);
-        const y = getY(volume, globalMinVolume, globalMaxVolume);
+        const y = getY(volume, minMax.min, minMax.max);
         const hasData = volume > 0;
         
         if (prevValidIndex === -1) {
@@ -629,7 +639,7 @@ function drawVolumeChart(
             if (useSmooth && prevValidIndex >= 0) {
               const prevTime = new Date(data[prevValidIndex].timestamp).getTime() / 1000;
               const prevX = getX(prevTime);
-              const prevY = getY(data[prevValidIndex].volume || 0, globalMinVolume, globalMaxVolume);
+              const prevY = getY(data[prevValidIndex].volume || 0, minMax.min, minMax.max);
               const cp1x = prevX + (x - prevX) / 3;
               const cp1y = prevY;
               const cp2x = prevX + (x - prevX) * 2 / 3;
@@ -646,7 +656,7 @@ function drawVolumeChart(
               ctx.beginPath();
               ctx.setLineDash([5, 5]);
               const prevX = getX(prevTime);
-              const prevY = getY(data[prevValidIndex].volume || 0, globalMinVolume, globalMaxVolume);
+              const prevY = getY(data[prevValidIndex].volume || 0, minMax.min, minMax.max);
               ctx.moveTo(prevX, prevY);
               
               if (useSmooth) {
@@ -668,7 +678,7 @@ function drawVolumeChart(
               if (useSmooth && prevValidIndex >= 0) {
                 const prevTime = new Date(data[prevValidIndex].timestamp).getTime() / 1000;
                 const prevX = getX(prevTime);
-                const prevY = getY(data[prevValidIndex].volume || 0, globalMinVolume, globalMaxVolume);
+                const prevY = getY(data[prevValidIndex].volume || 0, minMax.min, minMax.max);
                 const cp1x = prevX + (x - prevX) / 3;
                 const cp1y = prevY;
                 const cp2x = prevX + (x - prevX) * 2 / 3;
@@ -892,36 +902,31 @@ function drawOBVChart(
   ctx.lineTo(width - padding, obvTopY + gridHeight);
   ctx.stroke();
 
-  // 전체 데이터의 OBV min/max 계산 (모든 티커가 동일한 스케일 사용)
-  let globalObvMin = 0;
-  let globalObvMax = 1;
-  let hasObvData = false;
-  dataMap.forEach((data) => {
+  // 각 티커별 OBV min/max 계산 (각 티커가 자신의 스케일 사용)
+  const obvMinMaxBySymbol = new Map<string, { min: number; max: number; values: number[] }>();
+  dataMap.forEach((data, symbol) => {
     const obvValues = calculateOBV(data);
     if (obvValues.length > 0) {
-      const minVal = Math.min(...obvValues);
-      const maxVal = Math.max(...obvValues);
-      if (!hasObvData) {
-        globalObvMin = minVal;
-        globalObvMax = maxVal;
-        hasObvData = true;
-      } else {
-        if (minVal < globalObvMin) globalObvMin = minVal;
-        if (maxVal > globalObvMax) globalObvMax = maxVal;
-      }
+      obvMinMaxBySymbol.set(symbol, {
+        min: Math.min(...obvValues),
+        max: Math.max(...obvValues),
+        values: obvValues
+      });
     }
   });
 
   // OBV 렌더링
   let colorIndex = 0;
   dataMap.forEach((data, symbol) => {
-    const obvValues = calculateOBV(data);
+    const obvData = obvMinMaxBySymbol.get(symbol);
     
-    if (obvValues.length === 0) {
+    if (!obvData) {
       colorIndex++;
       return;
     }
 
+    const obvValues = obvData.values;
+    const minMax = { min: obvData.min, max: obvData.max };
     const obvColor = colors[colorIndex % colors.length];
     
     if (!hideLines) {
@@ -938,7 +943,7 @@ function drawOBVChart(
       const time = new Date(data[i].timestamp).getTime() / 1000;
       if (time >= minTime && time <= maxTime) {
         const x = getX(time);
-        const y = getY(obvValues[i], globalObvMin, globalObvMax);
+        const y = getY(obvValues[i], minMax.min, minMax.max);
         const volume = data[i].volume || 0;
         
         // volume이 0이면 데이터 없음으로 간주
@@ -965,7 +970,7 @@ function drawOBVChart(
             if (useSmooth && prevValidIndex >= 0) {
               const prevTime = new Date(data[prevValidIndex].timestamp).getTime() / 1000;
               const prevX = getX(prevTime);
-              const prevY = getY(obvValues[prevValidIndex], globalObvMin, globalObvMax);
+              const prevY = getY(obvValues[prevValidIndex], minMax.min, minMax.max);
               const cp1x = prevX + (x - prevX) / 3;
               const cp1y = prevY;
               const cp2x = prevX + (x - prevX) * 2 / 3;
@@ -982,7 +987,7 @@ function drawOBVChart(
               ctx.beginPath();
               ctx.setLineDash([5, 5]);
               const prevX = getX(prevTime);
-              const prevY = getY(obvValues[prevValidIndex], globalObvMin, globalObvMax);
+              const prevY = getY(obvValues[prevValidIndex], minMax.min, minMax.max);
               ctx.moveTo(prevX, prevY);
               
               if (useSmooth) {
@@ -1004,7 +1009,7 @@ function drawOBVChart(
               if (useSmooth && prevValidIndex >= 0) {
                 const prevTime = new Date(data[prevValidIndex].timestamp).getTime() / 1000;
                 const prevX = getX(prevTime);
-                const prevY = getY(obvValues[prevValidIndex], globalObvMin, globalObvMax);
+                const prevY = getY(obvValues[prevValidIndex], minMax.min, minMax.max);
                 const cp1x = prevX + (x - prevX) / 3;
                 const cp1y = prevY;
                 const cp2x = prevX + (x - prevX) * 2 / 3;
@@ -1481,8 +1486,8 @@ function renderWithCrosshair() {
     obvChartHeight = heightPerChart;
     obvTopY = priceChartHeight;
   } else {
-    // Price만 100%
-    priceChartHeight = totalHeight;
+    // Price만 100% (x축 label 영역 제외)
+    priceChartHeight = totalHeight - xAxisLabelHeight;
   }
   
   canvas.width = width * dpr;
