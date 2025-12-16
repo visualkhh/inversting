@@ -2,8 +2,17 @@ import { writeFileSync, mkdirSync } from 'fs';
 import path from 'path';
 import { StockLoader } from '../stock/StockLoader';
 
+const broadcomTicker = 'AVGO';
+const samsungTicker = '005930.KS';
+const intelTicker = 'INTC';
+const amdTicker = 'AMD';
+const micronTicker = 'MU';
+const oracleTicker = 'ORCL';
+const nvidiaTicker = 'NVDA';
+const tsmcTicker = '2330.TW';
+const skhynixTicker = '000660.KS';
 // 기본 심볼 목록 (stock-diff와 동일)
-const symbols = ['AVGO', 'MU', '005930.KS', '000660.KS'];
+const symbols = [tsmcTicker, micronTicker, amdTicker, intelTicker, broadcomTicker];
 
 // 날짜 범위 (stock-diff와 동일)
 const from = '2025-10-01';

@@ -37,8 +37,9 @@
       color: #333;
       border-bottom: 1px solid #e5e5e5;
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
-      gap: 12px;
+      gap: 8px;
     }
     #status label {
       display: inline-flex;
@@ -48,6 +49,54 @@
       user-select: none;
       color: #222;
       font-weight: 600;
+      white-space: nowrap;
+    }
+    #ticker-toggles {
+      padding: 8px 12px;
+      border-bottom: 1px solid #e5e5e5;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    #ticker-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    #ticker-list label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+      color: #222;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    /* 모바일 대응 */
+    @media (max-width: 768px) {
+      #status {
+        font-size: 11px;
+        gap: 6px;
+        padding: 6px 8px;
+      }
+      #status label {
+        font-size: 11px;
+        gap: 4px;
+      }
+      #ticker-toggles {
+        font-size: 11px;
+        gap: 6px;
+        padding: 6px 8px;
+      }
+      #ticker-list label {
+        font-size: 11px;
+        gap: 4px;
+      }
+      #chart-container {
+        padding: 0 4px;
+      }
     }
   </style>
 </head>
@@ -59,7 +108,7 @@
         <input type="checkbox" id="toggle-events" /> 이벤트 표시
       </label>
       <label for="toggle-candles" id="toggle-candles-label">
-        <input type="checkbox" id="toggle-candles" /> 캠들 표시
+        <input type="checkbox" id="toggle-candles" /> 캔들 표시
       </label>
       <label for="toggle-gaps" id="toggle-gaps-label">
         <input type="checkbox" id="toggle-gaps" /> 빈곳보기
@@ -73,6 +122,25 @@
       <label for="toggle-smooth" id="toggle-smooth-label">
         <input type="checkbox" id="toggle-smooth" /> 부드러운 곱선
       </label>
+      <label for="toggle-average" id="toggle-average-label">
+        <input type="checkbox" id="toggle-average" /> 평균선
+      </label>
+      <label for="toggle-hide-values" id="toggle-hide-values-label">
+        <input type="checkbox" id="toggle-hide-values" /> 수치 숨기기
+      </label>
+      <label for="toggle-daily-group" id="toggle-daily-group-label">
+        <input type="checkbox" id="toggle-daily-group" /> 일자별 그룹
+      </label>
+      <label for="toggle-hide-lines" id="toggle-hide-lines-label">
+        <input type="checkbox" id="toggle-hide-lines" /> 실선 숨기기
+      </label>
+    </div>
+    <div id="ticker-toggles">
+      <span style="font-weight: 600; color: #222;">티커:</span>
+      <label id="toggle-all-tickers-label">
+        <input type="checkbox" id="toggle-all-tickers" checked /> 전체
+      </label>
+      <div id="ticker-list"></div>
     </div>
     <div id="chart-container">
       <canvas id="chart"></canvas>
