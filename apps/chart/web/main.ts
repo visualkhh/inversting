@@ -22,6 +22,7 @@ const toggleCandlesEl = document.getElementById('toggle-candles') as HTMLInputEl
 const toggleGapsEl = document.getElementById('toggle-gaps') as HTMLInputElement | null;
 const toggleVolumeEl = document.getElementById('toggle-volume') as HTMLInputElement | null;
 const toggleOBVEl = document.getElementById('toggle-obv') as HTMLInputElement | null;
+const toggleSmoothEl = document.getElementById('toggle-smooth') as HTMLInputElement | null;
 const canvas = document.getElementById('chart') as HTMLCanvasElement | null;
 
 if (!canvas) {
@@ -123,7 +124,8 @@ function drawSimpleOverlayChart(
   showCandles = true,
   fillGaps = false,
   showOBV = false,
-  priceChartHeight?: number
+  priceChartHeight?: number,
+  useSmooth = false
 ) {
   const actualHeight = priceChartHeight || height;
   const allTimePoints = new Set<number>();
@@ -352,7 +354,17 @@ function drawSimpleOverlayChart(
         const prevX = getX(prevPoint.time);
         const prevY = getY(prevPoint.close, minMax.min, minMax.max);
         ctx.moveTo(prevX, prevY);
-        ctx.lineTo(x, y);
+        
+        if (useSmooth) {
+          const cp1x = prevX + (x - prevX) / 3;
+          const cp1y = prevY;
+          const cp2x = prevX + (x - prevX) * 2 / 3;
+          const cp2y = y;
+          ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+        
         ctx.stroke();
         if (!fillGaps) {
           ctx.setLineDash([]);
@@ -360,7 +372,21 @@ function drawSimpleOverlayChart(
         ctx.beginPath();
         ctx.moveTo(x, y);
       } else {
-        ctx.lineTo(x, y);
+        if (useSmooth && i > 0) {
+          // Catmull-Rom 스플라인 근사
+          const prevX = getX(prevPoint.time);
+          const prevY = getY(prevPoint.close, minMax.min, minMax.max);
+          
+          // 제어점 계산: 이전과 현재 점의 1/3 지점
+          const cp1x = prevX + (x - prevX) / 3;
+          const cp1y = prevY;
+          const cp2x = prevX + (x - prevX) * 2 / 3;
+          const cp2y = y;
+          
+          ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
       }
     }
     ctx.stroke();
@@ -401,7 +427,8 @@ function drawVolumeChart(
   volumeHeight: number,
   dataMap: Map<string, ChartData[]>,
   sortedTimes: number[],
-  fillGaps: boolean
+  fillGaps: boolean,
+  useSmooth = false
 ) {
   if (!ctx || sortedTimes.length === 0) return;
 
@@ -504,23 +531,57 @@ function drawVolumeChart(
           // fillGaps가 true면 모두 실선, false면 gap 있으면 점선
           if (fillGaps) {
             // 빈곳채우기: 모두 실선
-            ctx.lineTo(x, y);
+            if (useSmooth && prevValidIndex >= 0) {
+              const prevTime = new Date(data[prevValidIndex].timestamp).getTime() / 1000;
+              const prevX = getX(prevTime);
+              const prevY = getY(data[prevValidIndex].volume || 0, minVolume, maxVolume);
+              const cp1x = prevX + (x - prevX) / 3;
+              const cp1y = prevY;
+              const cp2x = prevX + (x - prevX) * 2 / 3;
+              const cp2y = y;
+              ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
+            } else {
+              ctx.lineTo(x, y);
+            }
           } else {
             // gap이 있으면 점선
             if (hasTimeGap || hasDataGap) {
               // 점선으로 그리기
               ctx.stroke();
               ctx.beginPath();
-              ctx.setLineDash([2, 2]);
-              ctx.moveTo(getX(prevTime), getY(data[prevValidIndex].volume || 0, minVolume, maxVolume));
-              ctx.lineTo(x, y);
+              ctx.setLineDash([5, 5]);
+              const prevX = getX(prevTime);
+              const prevY = getY(data[prevValidIndex].volume || 0, minVolume, maxVolume);
+              ctx.moveTo(prevX, prevY);
+              
+              if (useSmooth) {
+                const cp1x = prevX + (x - prevX) / 3;
+                const cp1y = prevY;
+                const cp2x = prevX + (x - prevX) * 2 / 3;
+                const cp2y = y;
+                ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
+              } else {
+                ctx.lineTo(x, y);
+              }
+              
               ctx.stroke();
               ctx.setLineDash([]);
               ctx.beginPath();
               ctx.moveTo(x, y);
             } else {
               // 실선으로 그리기
-              ctx.lineTo(x, y);
+              if (useSmooth && prevValidIndex >= 0) {
+                const prevTime = new Date(data[prevValidIndex].timestamp).getTime() / 1000;
+                const prevX = getX(prevTime);
+                const prevY = getY(data[prevValidIndex].volume || 0, minVolume, maxVolume);
+                const cp1x = prevX + (x - prevX) / 3;
+                const cp1y = prevY;
+                const cp2x = prevX + (x - prevX) * 2 / 3;
+                const cp2y = y;
+                ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
+              } else {
+                ctx.lineTo(x, y);
+              }
             }
           }
           prevValidIndex = i;
@@ -563,7 +624,8 @@ function drawOBVChart(
   obvHeight: number,
   dataMap: Map<string, ChartData[]>,
   sortedTimes: number[],
-  fillGaps: boolean
+  fillGaps: boolean,
+  useSmooth = false
 ) {
   if (!ctx || sortedTimes.length === 0) return;
 
@@ -675,23 +737,57 @@ function drawOBVChart(
           // fillGaps가 true면 모두 실선, false면 gap 있으면 점선
           if (fillGaps) {
             // 빈곳채우기: 모두 실선
-            ctx.lineTo(x, y);
+            if (useSmooth && prevValidIndex >= 0) {
+              const prevTime = new Date(data[prevValidIndex].timestamp).getTime() / 1000;
+              const prevX = getX(prevTime);
+              const prevY = getY(obvValues[prevValidIndex], obvMin, obvMax);
+              const cp1x = prevX + (x - prevX) / 3;
+              const cp1y = prevY;
+              const cp2x = prevX + (x - prevX) * 2 / 3;
+              const cp2y = y;
+              ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
+            } else {
+              ctx.lineTo(x, y);
+            }
           } else {
             // gap이 있으면 점선
             if (hasTimeGap || hasDataGap) {
               // 점선으로 그리기
               ctx.stroke();
               ctx.beginPath();
-              ctx.setLineDash([2, 2]);
-              ctx.moveTo(getX(prevTime), getY(obvValues[prevValidIndex], obvMin, obvMax));
-              ctx.lineTo(x, y);
+              ctx.setLineDash([5, 5]);
+              const prevX = getX(prevTime);
+              const prevY = getY(obvValues[prevValidIndex], obvMin, obvMax);
+              ctx.moveTo(prevX, prevY);
+              
+              if (useSmooth) {
+                const cp1x = prevX + (x - prevX) / 3;
+                const cp1y = prevY;
+                const cp2x = prevX + (x - prevX) * 2 / 3;
+                const cp2y = y;
+                ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
+              } else {
+                ctx.lineTo(x, y);
+              }
+              
               ctx.stroke();
               ctx.setLineDash([]);
               ctx.beginPath();
               ctx.moveTo(x, y);
             } else {
               // 실선으로 그리기
-              ctx.lineTo(x, y);
+              if (useSmooth && prevValidIndex >= 0) {
+                const prevTime = new Date(data[prevValidIndex].timestamp).getTime() / 1000;
+                const prevX = getX(prevTime);
+                const prevY = getY(obvValues[prevValidIndex], obvMin, obvMax);
+                const cp1x = prevX + (x - prevX) / 3;
+                const cp1y = prevY;
+                const cp2x = prevX + (x - prevX) * 2 / 3;
+                const cp2y = y;
+                ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
+              } else {
+                ctx.lineTo(x, y);
+              }
             }
           }
           prevValidIndex = i;
@@ -946,6 +1042,7 @@ let showCandles = false;
 let showGaps = true;
 let showVolume = false;
 let showOBV = false;
+let showSmooth = false;
 let mouseX: number | null = null;
 let mouseY: number | null = null;
 let canvasWidth = 0;
@@ -1004,16 +1101,16 @@ function renderWithCrosshair() {
   const sortedTimes = Array.from(allTimePoints).sort((a, b) => a - b);
   
   // Price 차트 그리기
-  drawSimpleOverlayChart(ctx, width, totalHeight, currentData.dataMap, currentData.events, showEvents, showCandles, showGaps, showVolume || showOBV, priceChartHeight);
+  drawSimpleOverlayChart(ctx, width, totalHeight, currentData.dataMap, currentData.events, showEvents, showCandles, showGaps, showVolume || showOBV, priceChartHeight, showSmooth);
   
   // Volume 렌더링
   if (showVolume) {
-    drawVolumeChart(ctx, width, totalHeight, volumeTopY, volumeTopY, volumeChartHeight, currentData.dataMap, sortedTimes, showGaps);
+    drawVolumeChart(ctx, width, totalHeight, volumeTopY, volumeTopY, volumeChartHeight, currentData.dataMap, sortedTimes, showGaps, showSmooth);
   }
   
   // OBV 렌더링
   if (showOBV) {
-    drawOBVChart(ctx, width, totalHeight, obvTopY, obvTopY, obvChartHeight, currentData.dataMap, sortedTimes, showGaps);
+    drawOBVChart(ctx, width, totalHeight, obvTopY, obvTopY, obvChartHeight, currentData.dataMap, sortedTimes, showGaps, showSmooth);
   }
 
   // 이벤트 마커 (전체 패널에 걸쳐)
@@ -1152,6 +1249,14 @@ function render() {
     toggleOBVEl.checked = showOBV;
     toggleOBVEl.addEventListener('change', () => {
       showOBV = toggleOBVEl.checked;
+      render();
+    });
+  }
+
+  if (toggleSmoothEl) {
+    toggleSmoothEl.checked = showSmooth;
+    toggleSmoothEl.addEventListener('change', () => {
+      showSmooth = toggleSmoothEl.checked;
       render();
     });
   }

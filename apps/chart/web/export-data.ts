@@ -6,7 +6,7 @@ import { StockLoader } from '../stock/StockLoader';
 const symbols = ['AVGO', 'MU', '005930.KS', '000660.KS'];
 
 // 날짜 범위 (stock-diff와 동일)
-const from = '2025-01-01';
+const from = '2025-10-01';
 const to = '2025-12-16';
 
 async function main() {
