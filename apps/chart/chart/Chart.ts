@@ -7,8 +7,8 @@ interface ChartData {
   high: number;
   low: number;
   close: number;
-  volume: number;
-  obv: number;
+  volume?: number;
+  obv?: number;
 }
 
 interface TradePoint {

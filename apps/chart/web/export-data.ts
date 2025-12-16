@@ -6,21 +6,18 @@ import { StockLoader } from '../stock/StockLoader';
 const symbols = ['AVGO', 'MU', '005930.KS', '000660.KS'];
 
 // 날짜 범위 (stock-diff와 동일)
-const from = '2025-09-01';
+const from = '2025-01-01';
 const to = '2025-12-16';
-
-// 웹 이벤트 샘플 (필요에 맞게 수정 가능)
-const events = [
-  { timestamp: '2025-09-15 09:30:00', label: 'Event A', color: '#FF0000' },
-  { timestamp: '2025-10-15 09:30:00', label: 'Event B', color: '#0000FF' },
-  { timestamp: '2025-11-15 09:30:00', label: 'Event C', color: '#00AA00' },
-];
 
 async function main() {
   const loader = new StockLoader({ from, to, interval: '1d' });
   console.log(`Exporting symbols: ${symbols.join(', ')} (${from} ~ ${to})`);
 
+  // 실제 주식 데이터 및 이벤트 가져오기 (chart + quoteSummary 모두)
   const dataMap = await loader.loadStocks(symbols);
+  const events = await loader.loadAllEvents(symbols);
+  events.push({timestamp: '2025-09-23 23:00:00', color:'#FF0000', label: 'Micron Technology Q4'})
+  // events.sort((a, b) => (new Date(a.timestamp).getTime() < new Date(b.timestamp).getTime() ? -1 : new Date(a.timestamp).getTime() > new Date(b.timestamp).getTime() ? 1 : 0));
   const obj: any = { dataMap: {}, events };
   dataMap.forEach((arr, key) => {
     obj.dataMap[key] = arr;
