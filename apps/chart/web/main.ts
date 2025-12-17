@@ -135,7 +135,7 @@ function drawSimpleOverlayChart(
   fillGaps = false,
   showOBV = false,
   priceChartHeight?: number,
-  smoothMode: 'none' | 'smooth' | 'open' = 'none',
+  smoothMode: 'none' | 'smooth' | 'open' | 'high' | 'low' = 'none',
   showAverage = false,
   hideValues = false,
   hideLines = false,
@@ -375,10 +375,14 @@ function drawSimpleOverlayChart(
           const cp1x = prevX + (x - prevX) / 3;
           const cp1y = prevY;
           const cp2x = prevX + (x - prevX) * 2 / 3;
-          // smoothMode === 'open'이면 현재 포인트의 open 값을 제어점으로 활용
+          // smoothMode에 따라 제어점 Y값 결정
           let cp2y: number;
           if (smoothMode === 'open' && point.open && point.open > 0) {
             cp2y = getY(point.open, minMax.min, minMax.max);
+          } else if (smoothMode === 'high' && point.high && point.high > 0) {
+            cp2y = getY(point.high, minMax.min, minMax.max);
+          } else if (smoothMode === 'low' && point.low && point.low > 0) {
+            cp2y = getY(point.low, minMax.min, minMax.max);
           } else {
             cp2y = y;
           }
@@ -401,10 +405,14 @@ function drawSimpleOverlayChart(
           const cp1x = prevX + (x - prevX) / 3;
           const cp1y = prevY;
           const cp2x = prevX + (x - prevX) * 2 / 3;
-          // smoothMode === 'open'이면 현재 포인트의 open 값을 제어점으로 활용
+          // smoothMode에 따라 제어점 Y값 결정
           let cp2y: number;
           if (smoothMode === 'open' && point.open && point.open > 0) {
             cp2y = getY(point.open, minMax.min, minMax.max);
+          } else if (smoothMode === 'high' && point.high && point.high > 0) {
+            cp2y = getY(point.high, minMax.min, minMax.max);
+          } else if (smoothMode === 'low' && point.low && point.low > 0) {
+            cp2y = getY(point.low, minMax.min, minMax.max);
           } else {
             cp2y = y;
           }
@@ -1518,7 +1526,7 @@ let showCandles = false;
 let showGaps = true;
 let showVolume = false;
 let showOBV = false;
-let smoothMode: 'none' | 'smooth' | 'open' = 'none';  // 곱선 모드: 직선, 부드럽게, 시가반영
+let smoothMode: 'none' | 'smooth' | 'open' | 'high' | 'low' = 'none';  // 곱선 모드: 직선, 부드럽게, 시작가반영, 최고가, 최저가
 let showAverage = false;
 let hideValues = false;
 let dailyGroup = false;
@@ -2267,7 +2275,7 @@ function render() {
       }
       radio.addEventListener('change', () => {
         if (radio.checked) {
-          smoothMode = radio.value as 'none' | 'smooth' | 'open';
+          smoothMode = radio.value as 'none' | 'smooth' | 'open' | 'high' | 'low';
           render();
         }
       });
