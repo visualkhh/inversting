@@ -27,6 +27,7 @@ const toggleAverageEl = document.getElementById('toggle-average') as HTMLInputEl
 const toggleHideValuesEl = document.getElementById('toggle-hide-values') as HTMLInputElement | null;
 const toggleDailyGroupEl = document.getElementById('toggle-daily-group') as HTMLInputElement | null;
 const toggleHideLinesEl = document.getElementById('toggle-hide-lines') as HTMLInputElement | null;
+const toggleHideGridEl = document.getElementById('toggle-hide-grid') as HTMLInputElement | null;
 const rangeMinEl = document.getElementById('range-min') as HTMLInputElement | null;
 const rangeMaxEl = document.getElementById('range-max') as HTMLInputElement | null;
 const rangeSliderRangeEl = document.getElementById('range-slider-range') as HTMLElement | null;
@@ -203,25 +204,27 @@ function drawSimpleOverlayChart(
   const gridStepX = gridWidth / gridDivisions;
   const gridStepY = gridHeight / gridDivisions;
   
-  ctx.strokeStyle = '#CCCCCC';
-  ctx.lineWidth = 1;
-  
-  // 세로 그리드선
-  for (let i = 0; i <= gridDivisions; i++) {
-    const x = padding + gridStepX * i;
-    ctx.beginPath();
-    ctx.moveTo(x, graphTop);
-    ctx.lineTo(x, graphBottom);
-    ctx.stroke();
-  }
-  
-  // 가로 그리드선
-  for (let i = 0; i <= gridDivisions; i++) {
-    const y = graphTop + gridStepY * i;
-    ctx.beginPath();
-    ctx.moveTo(padding, y);
-    ctx.lineTo(width - padding, y);
-    ctx.stroke();
+  if (!hideGrid) {
+    ctx.strokeStyle = '#CCCCCC';
+    ctx.lineWidth = 1;
+    
+    // 세로 그리드선
+    for (let i = 0; i <= gridDivisions; i++) {
+      const x = padding + gridStepX * i;
+      ctx.beginPath();
+      ctx.moveTo(x, graphTop);
+      ctx.lineTo(x, graphBottom);
+      ctx.stroke();
+    }
+    
+    // 가로 그리드선
+    for (let i = 0; i <= gridDivisions; i++) {
+      const y = graphTop + gridStepY * i;
+      ctx.beginPath();
+      ctx.moveTo(padding, y);
+      ctx.lineTo(width - padding, y);
+      ctx.stroke();
+    }
   }
 
   // Y축 (항상 그리기)
@@ -283,6 +286,12 @@ function drawSimpleOverlayChart(
     const minMax = minMaxBySymbol.get(symbol)!;
     const sortedPoints = points.sort((a, b) => a.time - b.time);
     if (sortedPoints.length === 0) {
+      colorIndex++;
+      return;
+    }
+    
+    // 숨겨진 티커는 그래프 그리지 않음
+    if (!visibleTickers.has(symbol)) {
       colorIndex++;
       return;
     }
@@ -390,26 +399,43 @@ function drawSimpleOverlayChart(
     colorIndex++;
   });
   
-  // 범례 그리기 (좌측 상단 빈 공간)
+  // 범례 그리기 (좌측 상단 빈 공간) - 클릭 가능
   const legendX = padding + 10;
   const legendY = padding - 25;
   const legendLineWidth = 15;
   const legendItemWidth = 80;
+  const legendHeight = 16;
   let legendColorIndex = 0;
+  legendItems = []; // 범례 클릭 영역 초기화
   
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.font = '11px Arial';
   dataBySymbol.forEach((_, symbol) => {
     const color = colors[legendColorIndex % colors.length];
+    const isVisible = visibleTickers.has(symbol);
+    const itemX = legendX + legendColorIndex * legendItemWidth;
+    
+    // 클릭 영역 저장
+    legendItems.push({
+      symbol,
+      x: itemX - 5,
+      y: legendY - legendHeight / 2,
+      width: legendItemWidth - 5,
+      height: legendHeight
+    });
+    
+    // 숨겨진 티커는 회색으로 표시
+    ctx.globalAlpha = isVisible ? 1.0 : 0.3;
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(legendX + legendColorIndex * legendItemWidth, legendY);
-    ctx.lineTo(legendX + legendColorIndex * legendItemWidth + legendLineWidth, legendY);
+    ctx.moveTo(itemX, legendY);
+    ctx.lineTo(itemX + legendLineWidth, legendY);
     ctx.stroke();
-    ctx.fillStyle = '#000000';
-    ctx.fillText(symbol, legendX + legendColorIndex * legendItemWidth + legendLineWidth + 5, legendY);
+    ctx.fillStyle = isVisible ? '#000000' : '#999999';
+    ctx.fillText(symbol, itemX + legendLineWidth + 5, legendY);
+    ctx.globalAlpha = 1.0;
     legendColorIndex++;
   });
   
@@ -548,25 +574,27 @@ function drawVolumeChart(
   const gridStepX = gridWidth / gridDivisions;
   const gridStepY = gridHeight / gridDivisions;
   
-  ctx.strokeStyle = '#CCCCCC';
-  ctx.lineWidth = 1;
-  
-  // 세로 그리드선
-  for (let i = 0; i <= gridDivisions; i++) {
-    const x = padding + gridStepX * i;
-    ctx.beginPath();
-    ctx.moveTo(x, volumeTopY);
-    ctx.lineTo(x, volumeTopY + gridHeight);
-    ctx.stroke();
-  }
-  
-  // 가로 그리드선
-  for (let i = 0; i <= gridDivisions; i++) {
-    const y = volumeTopY + gridStepY * i;
-    ctx.beginPath();
-    ctx.moveTo(padding, y);
-    ctx.lineTo(width - padding, y);
-    ctx.stroke();
+  if (!hideGrid) {
+    ctx.strokeStyle = '#CCCCCC';
+    ctx.lineWidth = 1;
+    
+    // 세로 그리드선
+    for (let i = 0; i <= gridDivisions; i++) {
+      const x = padding + gridStepX * i;
+      ctx.beginPath();
+      ctx.moveTo(x, volumeTopY);
+      ctx.lineTo(x, volumeTopY + gridHeight);
+      ctx.stroke();
+    }
+    
+    // 가로 그리드선
+    for (let i = 0; i <= gridDivisions; i++) {
+      const y = volumeTopY + gridStepY * i;
+      ctx.beginPath();
+      ctx.moveTo(padding, y);
+      ctx.lineTo(width - padding, y);
+      ctx.stroke();
+    }
   }
 
   // Y축 연결
@@ -601,6 +629,12 @@ function drawVolumeChart(
     const volumeColor = colors[colorIndex % colors.length];
     const minMax = volumeMinMaxBySymbol.get(symbol);
     if (!minMax) {
+      colorIndex++;
+      return;
+    }
+    
+    // 숨겨진 티커는 그래프 그리지 않음
+    if (!visibleTickers.has(symbol)) {
       colorIndex++;
       return;
     }
@@ -872,25 +906,27 @@ function drawOBVChart(
   const gridStepX = gridWidth / gridDivisions;
   const gridStepY = gridHeight / gridDivisions;
   
-  ctx.strokeStyle = '#CCCCCC';
-  ctx.lineWidth = 1;
-  
-  // 세로 그리드선
-  for (let i = 0; i <= gridDivisions; i++) {
-    const x = padding + gridStepX * i;
-    ctx.beginPath();
-    ctx.moveTo(x, obvTopY);
-    ctx.lineTo(x, obvTopY + gridHeight);
-    ctx.stroke();
-  }
-  
-  // 가로 그리드선
-  for (let i = 0; i <= gridDivisions; i++) {
-    const y = obvTopY + gridStepY * i;
-    ctx.beginPath();
-    ctx.moveTo(padding, y);
-    ctx.lineTo(width - padding, y);
-    ctx.stroke();
+  if (!hideGrid) {
+    ctx.strokeStyle = '#CCCCCC';
+    ctx.lineWidth = 1;
+    
+    // 세로 그리드선
+    for (let i = 0; i <= gridDivisions; i++) {
+      const x = padding + gridStepX * i;
+      ctx.beginPath();
+      ctx.moveTo(x, obvTopY);
+      ctx.lineTo(x, obvTopY + gridHeight);
+      ctx.stroke();
+    }
+    
+    // 가로 그리드선
+    for (let i = 0; i <= gridDivisions; i++) {
+      const y = obvTopY + gridStepY * i;
+      ctx.beginPath();
+      ctx.moveTo(padding, y);
+      ctx.lineTo(width - padding, y);
+      ctx.stroke();
+    }
   }
 
   // Y축 연결 (Price 영역에서 이어받기)
@@ -926,6 +962,12 @@ function drawOBVChart(
     const obvData = obvMinMaxBySymbol.get(symbol);
     
     if (!obvData) {
+      colorIndex++;
+      return;
+    }
+    
+    // 숨겨진 티커는 그래프 그리지 않음
+    if (!visibleTickers.has(symbol)) {
       colorIndex++;
       return;
     }
@@ -1439,13 +1481,16 @@ let showAverage = false;
 let hideValues = false;
 let dailyGroup = false;
 let hideLines = false;
-let enabledTickers = new Set<string>();
+let hideGrid = false;
+let enabledTickers = new Set<string>();  // 상단 체크박스 - 데이터 필터링
+let visibleTickers = new Set<string>();  // 범례 클릭 - 그래프 표시/숨김
 let mouseX: number | null = null;
 let mouseY: number | null = null;
 let canvasWidth = 0;
 let canvasHeight = 0;
 let rangeMin = 0;  // X축 0-100%
 let rangeMax = 100; // X축 0-100%
+let legendItems: { symbol: string; x: number; y: number; width: number; height: number }[] = [];
 
 function renderWithCrosshair() {
   if (!currentData || !canvas) return;
@@ -1599,13 +1644,45 @@ function drawCrosshair(
   hasVolume: boolean,
   hasOBV: boolean
 ) {
-  // 수직선 (전체 영역)
+  // 그래프 영역 내부인지 확인 (X축: padding ~ width-padding)
+  if (x < padding || x > width - padding) return;
+  
+  // Y축 영역 확인 - 차트 영역 내부인지
+  const xAxisLabelHeight = 40;
+  const bottomLimit = height - xAxisLabelHeight;
+  let isInChartArea = false;
+  
+  // Price 영역
+  if (y >= padding && y <= priceHeight) {
+    isInChartArea = true;
+  }
+  // Volume 영역
+  if (hasVolume && volumeHeight > 0 && y >= volumeTopY && y <= volumeTopY + volumeHeight) {
+    isInChartArea = true;
+  }
+  // OBV 영역
+  if (hasOBV && obvHeight > 0 && y >= obvTopY && y <= obvTopY + obvHeight) {
+    isInChartArea = true;
+  }
+  
+  if (!isInChartArea) return;
+  
+  // 차트 영역의 실제 하단 계산
+  let chartBottom = priceHeight;
+  if (hasVolume && volumeHeight > 0) {
+    chartBottom = volumeTopY + volumeHeight;
+  }
+  if (hasOBV && obvHeight > 0) {
+    chartBottom = obvTopY + obvHeight;
+  }
+  
+  // 수직선 (차트 영역만)
   ctx.strokeStyle = '#666666';
   ctx.lineWidth = 1;
   ctx.setLineDash([4, 4]);
   ctx.beginPath();
   ctx.moveTo(x, padding);
-  ctx.lineTo(x, height - padding);
+  ctx.lineTo(x, chartBottom);
   ctx.stroke();
 
   // 수평선
@@ -1675,9 +1752,10 @@ function render() {
   const toggleAllTickersEl = document.getElementById('toggle-all-tickers') as HTMLInputElement | null;
   
   if (currentData && tickerListEl) {
-    // 모든 티커를 기본적으로 활성화
+    // 모든 티커를 기본적으로 활성화 및 표시
     currentData.dataMap.forEach((_, symbol) => {
       enabledTickers.add(symbol);
+      visibleTickers.add(symbol);  // 범례 토글용도 기본 표시
     });
     
     // 각 티커별 토글 버튼 생성
@@ -1692,8 +1770,10 @@ function render() {
       checkbox.addEventListener('change', () => {
         if (checkbox.checked) {
           enabledTickers.add(symbol);
+          visibleTickers.add(symbol);  // 데이터 활성화 시 표시도 켜짐
         } else {
           enabledTickers.delete(symbol);
+          visibleTickers.delete(symbol);  // 데이터 비활성화 시 표시도 끔
         }
         
         // 전체 토글 상태 업데이트
@@ -1718,12 +1798,14 @@ function render() {
           // 모두 활성화
           currentData!.dataMap.forEach((_, symbol) => {
             enabledTickers.add(symbol);
+            visibleTickers.add(symbol);  // 표시도 켜짐
             const checkbox = document.getElementById(`toggle-ticker-${symbol}`) as HTMLInputElement;
             if (checkbox) checkbox.checked = true;
           });
         } else {
           // 모두 비활성화
           enabledTickers.clear();
+          visibleTickers.clear();  // 표시도 끔
           currentData!.dataMap.forEach((_, symbol) => {
             const checkbox = document.getElementById(`toggle-ticker-${symbol}`) as HTMLInputElement;
             if (checkbox) checkbox.checked = false;
@@ -1815,6 +1897,14 @@ function render() {
     });
   }
 
+  if (toggleHideGridEl) {
+    toggleHideGridEl.checked = hideGrid;
+    toggleHideGridEl.addEventListener('change', () => {
+      hideGrid = toggleHideGridEl.checked;
+      render();
+    });
+  }
+
   // Range slider 이벤트 설정
   function updateRangeSlider() {
     if (rangeSliderRangeEl) {
@@ -1867,5 +1957,46 @@ function render() {
     mouseX = null;
     mouseY = null;
     render();
+  });
+
+  // 범례 클릭으로 티커 표시/숨김 토글 (데이터 필터링 X, 그래프만 숨김)
+  canvas.addEventListener('click', (e: MouseEvent) => {
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+    
+    // 범례 영역 클릭 확인
+    for (const item of legendItems) {
+      if (clickX >= item.x && clickX <= item.x + item.width &&
+          clickY >= item.y && clickY <= item.y + item.height) {
+        // 그래프 표시/숨김 토글 (데이터는 유지)
+        if (visibleTickers.has(item.symbol)) {
+          visibleTickers.delete(item.symbol);
+        } else {
+          visibleTickers.add(item.symbol);
+        }
+        
+        render();
+        break;
+      }
+    }
+  });
+
+  // 범례 위에 마우스 올리면 커서 변경
+  canvas.addEventListener('mousemove', (e: MouseEvent) => {
+    const rect = canvas.getBoundingClientRect();
+    const hoverX = e.clientX - rect.left;
+    const hoverY = e.clientY - rect.top;
+    
+    let isOverLegend = false;
+    for (const item of legendItems) {
+      if (hoverX >= item.x && hoverX <= item.x + item.width &&
+          hoverY >= item.y && hoverY <= item.y + item.height) {
+        isOverLegend = true;
+        break;
+      }
+    }
+    
+    canvas.style.cursor = isOverLegend ? 'pointer' : 'crosshair';
   });
 })();
