@@ -2545,6 +2545,20 @@ function render() {
       zoomStart -= (zoomEnd - 100);
       zoomEnd = 100;
     }
+    
+    // 반올림 (부동소수점 오차 방지)
+    zoomStart = Math.round(zoomStart * 100) / 100;
+    zoomEnd = Math.round(zoomEnd * 100) / 100;
+    
+    // 0~100%로 돌아오면 줌 모드 해제 (오차 범위 0.5% 허용)
+    if (Math.abs(zoomStart) < 0.5 && Math.abs(zoomEnd - 100) < 0.5) {
+      zoomStart = 0;
+      zoomEnd = 100;
+      isPanning = false;
+      panStartX = null;
+      isTouchPanning = false;
+    }
+    
     render();
   }
 
@@ -2576,6 +2590,20 @@ function render() {
       zoomStart -= (zoomEnd - 100);
       zoomEnd = 100;
     }
+    
+    // 반올림 (부동소수점 오차 방지)
+    zoomStart = Math.round(zoomStart * 100) / 100;
+    zoomEnd = Math.round(zoomEnd * 100) / 100;
+    
+    // 0~100%로 돌아오면 줌 모드 해제 (오차 범위 0.5% 허용)
+    if (Math.abs(zoomStart) < 0.5 && Math.abs(zoomEnd - 100) < 0.5) {
+      zoomStart = 0;
+      zoomEnd = 100;
+      isPanning = false;
+      panStartX = null;
+      isTouchPanning = false;
+    }
+    
     render();
   }
 
@@ -2583,6 +2611,14 @@ function render() {
   function zoomReset() {
     zoomStart = 0;
     zoomEnd = 100;
+    // 줌 모드 완전 해제 (다시 드래그 선택 가능)
+    isPanning = false;
+    panStartX = null;
+    isTouchPanning = false;
+    isDragging = false;
+    dragStartX = null;
+    dragCurrentX = null;
+    isTouchDragging = false;
     render();
   }
 
@@ -2621,6 +2657,19 @@ function render() {
       zoomStart = Math.max(0, newStart);
       zoomEnd = Math.min(100, newEnd);
       panStartX = mouseX;
+      
+      // 반올림 (부동소수점 오차 방지)
+      zoomStart = Math.round(zoomStart * 100) / 100;
+      zoomEnd = Math.round(zoomEnd * 100) / 100;
+      
+      // 0~100%로 돌아오면 패닝 모드 해제 (오차 범위 0.5% 허용)
+      if (Math.abs(zoomStart) < 0.5 && Math.abs(zoomEnd - 100) < 0.5) {
+        zoomStart = 0;
+        zoomEnd = 100;
+        isPanning = false;
+        panStartX = null;
+      }
+      
       render();
       return;
     }
@@ -2708,11 +2757,11 @@ function render() {
     if (isInChartArea(x, y)) {
       // 확대/축소 전체(0~100%)면 무조건 드래그 선택, 아니면 패닝
       if (zoomStart === 0 && zoomEnd === 100) {
-        isTouchDragging = true;
+        isDragging = true;
         dragStartX = x;
         dragCurrentX = x;
       } else {
-        isTouchPanning = true;
+        isPanning = true;
         panStartX = x;
       }
     }
@@ -2735,20 +2784,18 @@ function render() {
         const startPercent = ((startX - padding) / chartWidth) * 100;
         const endPercent = ((endX - padding) / chartWidth) * 100;
         
-        // 현재 줌 범위 내에서의 상대적 위치로 변환
-        const currentRange = zoomEnd - zoomStart;
-        zoomStart = zoomStart + (startPercent / 100) * currentRange;
-        zoomEnd = zoomStart + ((endPercent - startPercent) / 100) * currentRange;
-        
+        if (zoomStart === 0 && zoomEnd === 100) {
+          zoomStart = startPercent;
+          zoomEnd = endPercent;
+        } else {
+          // 현재 줌 범위 내에서의 상대적 위치로 변환
+          const currentRange = zoomEnd - zoomStart;
+          zoomStart = zoomStart + (startPercent / 100) * currentRange;
+          zoomEnd = zoomStart + ((endPercent - startPercent) / 100) * currentRange;
+        }
         // 경계 조정
-        if (zoomStart < 0) {
-          zoomEnd -= zoomStart;
-          zoomStart = 0;
-        }
-        if (zoomEnd > 100) {
-          zoomStart -= (zoomEnd - 100);
-          zoomEnd = 100;
-        }
+        zoomStart = Math.max(0, zoomStart);
+        zoomEnd = Math.min(100, zoomEnd);
       }
       
       isDragging = false;
@@ -2949,6 +2996,19 @@ function render() {
       zoomStart = Math.max(0, newStart);
       zoomEnd = Math.min(100, newEnd);
       panStartX = x;
+      
+      // 반올림 (부동소수점 오차 방지)
+      zoomStart = Math.round(zoomStart * 100) / 100;
+      zoomEnd = Math.round(zoomEnd * 100) / 100;
+      
+      // 0~100%로 돌아오면 패닝 모드 해제 (오차 범위 0.5% 허용)
+      if (Math.abs(zoomStart) < 0.5 && Math.abs(zoomEnd - 100) < 0.5) {
+        zoomStart = 0;
+        zoomEnd = 100;
+        isTouchPanning = false;
+        panStartX = null;
+      }
+      
       render();
       return;
     }
@@ -2976,11 +3036,15 @@ function render() {
         const startPercent = ((startX - padding) / chartWidth) * 100;
         const endPercent = ((endX - padding) / chartWidth) * 100;
         
-        // 현재 줌 범위 내에서의 상대적 위치로 변환
-        const currentRange = zoomEnd - zoomStart;
-        zoomStart = zoomStart + (startPercent / 100) * currentRange;
-        zoomEnd = zoomStart + ((endPercent - startPercent) / 100) * currentRange;
-        
+        if (zoomStart === 0 && zoomEnd === 100) {
+          zoomStart = startPercent;
+          zoomEnd = endPercent;
+        } else {
+          // 현재 줌 범위 내에서의 상대적 위치로 변환
+          const currentRange = zoomEnd - zoomStart;
+          zoomStart = zoomStart + (startPercent / 100) * currentRange;
+          zoomEnd = zoomStart + ((endPercent - startPercent) / 100) * currentRange;
+        }
         // 경계 조정
         zoomStart = Math.max(0, zoomStart);
         zoomEnd = Math.min(100, zoomEnd);
