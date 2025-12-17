@@ -17,7 +17,7 @@ const symbols = [micronTicker, skhynixTicker, samsungTicker];
 
 // 날짜 범위 (stock-diff와 동일)
 const from = '2025-02-01';
-const to = '2025-12-16';
+const to = '2025-12-27';
 
 async function main() {
   const loader = new StockLoader({ from, to, interval: '1d' });

@@ -113,7 +113,9 @@ async function loadData(): Promise<{ dataMap: Map<string, ChartData[]>; events: 
     // Expecting shape { dataMap: Record<string, ChartData[]>, events?: EventMarker[] }
     const map = new Map<string, ChartData[]>();
     Object.keys(json.dataMap || {}).forEach(key => {
-      map.set(key, json.dataMap[key]);
+      const dataMapElement = json.dataMap[key] as ChartData[];
+      const fData = dataMapElement.filter(it => it.close !== null || it.open !==null)
+      map.set(key, fData);
     });
     const events: EventMarker[] = json.events || [];
     setStatus('Loaded chart-data.json');
@@ -192,11 +194,14 @@ function drawSimpleOverlayChart(
   const graphBottom = actualHeight;
   const graphHeight = graphBottom - graphTop;
 
-  // Y축 범위 적용: 정규화된 값(0-1)에서 yRangeMin~yRangeMax 범위만 표시
+  // Y축 범위 적용: 상하 10%씩 마진 (-10% ~ 110% 영역에 0~100% 데이터 표시)
+  const chartMargin = 0.1; // 10% 마진
   const getY = (value: number, minVal: number, maxVal: number): number => {
     const range = maxVal - minVal || 1;
     const normalizedValue = (value - minVal) / range;
-    return graphBottom - normalizedValue * graphHeight;
+    // 0%는 하단에서 10% 위치, 100%는 상단에서 10% 아래 위치
+    const scaledValue = chartMargin + normalizedValue * (1 - chartMargin * 2);
+    return graphBottom - scaledValue * graphHeight;
   };
 
   // 배경 (Price 영역만)
@@ -249,16 +254,26 @@ function drawSimpleOverlayChart(
     ctx.stroke();
   }
 
-  // Y축 레이블 (Price)
+  // Y축 레이블 (Price) - 0~100% 레이블을 마진 적용된 위치에 표시
   if (!hideValues) {
     ctx.fillStyle = '#000000';
     ctx.font = '12px Arial';
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 1;
     for (let i = 0; i <= 5; i++) {
-      const value = 100 - i * 20;
-      const y = graphTop + (i / 5) * graphHeight;
-      ctx.fillText(`${value}%`, padding - 10, y);
+      const value = 100 - i * 20; // 100%, 80%, 60%, 40%, 20%, 0%
+      const normalizedValue = value / 100; // 1, 0.8, 0.6, 0.4, 0.2, 0
+      // 마진 적용된 Y 위치 계산
+      const scaledValue = chartMargin + normalizedValue * (1 - chartMargin * 2);
+      const y = graphBottom - scaledValue * graphHeight;
+      ctx.fillText(`${value}%`, padding - 5, y);
+      // tick mark 그리기
+      ctx.beginPath();
+      ctx.moveTo(padding - 5, y);
+      ctx.lineTo(padding, y);
+      ctx.stroke();
     }
   }
   
@@ -302,8 +317,13 @@ function drawSimpleOverlayChart(
       return;
     }
 
-    // 각 포인트 캔들 (투명)
+    // 각 포인트 캔들 (투명) - 클리핑 적용
     if (showCandles) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(padding, graphTop, width - padding * 2, graphHeight);
+      ctx.clip();
+      
       sortedPoints.forEach(point => {
         const x = getX(point.time);
         const yHigh = getY(point.high, minMax.min, minMax.max);
@@ -334,6 +354,8 @@ function drawSimpleOverlayChart(
         ctx.strokeRect(x - candleWidth / 2, rectY, candleWidth, rectHeight);
         ctx.globalAlpha = 1;
       });
+      
+      ctx.restore();
     }
 
     // 라인 연결
@@ -528,8 +550,13 @@ function drawSimpleOverlayChart(
       }
     });
     
-    // 평균선 그리기
+    // 평균선 그리기 (클리핑 적용)
     if (avgPoints.length > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(padding, graphTop, width - padding * 2, graphHeight);
+      ctx.clip();
+      
       ctx.strokeStyle = '#000000'; // 검정색
       ctx.lineWidth = 2;
       ctx.setLineDash([3, 2]); // 촘촘한 점선
@@ -559,6 +586,7 @@ function drawSimpleOverlayChart(
       
       ctx.setLineDash([]);
       ctx.globalAlpha = 1.0;
+      ctx.restore();
     }
   }
 }
@@ -591,10 +619,13 @@ function drawVolumeChart(
     return padding + ((time - minTime) / timeRange) * (width - padding * 2);
   };
 
+  // 상하 10%씩 마진 적용
+  const chartMargin = 0.1;
   const getY = (value: number, minVal: number, maxVal: number): number => {
     const range = maxVal - minVal || 1;
     const normalizedValue = (value - minVal) / range;
-    return volumeTopY + (1 - normalizedValue) * volumeHeight;
+    const scaledValue = chartMargin + normalizedValue * (1 - chartMargin * 2);
+    return volumeTopY + (1 - scaledValue) * volumeHeight;
   };
 
   // 배경 (Volume 영역)
@@ -779,16 +810,25 @@ function drawVolumeChart(
     colorIndex++;
   });
 
-  // Y축 레이블 (Volume)
+  // Y축 레이블 (Volume) - 0~100% 레이블을 마진 적용된 위치에 표시
   if (!hideValues) {
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#000000';
     ctx.font = '12px Arial';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 1;
     for (let i = 0; i <= 5; i++) {
-      const value = 100 - i * 20;
-      const y = volumeTopY + (i / 5) * volumeHeight;
-      ctx.fillText(`${value}%`, padding - 10, y);
+      const value = 100 - i * 20; // 100%, 80%, 60%, 40%, 20%, 0%
+      const normalizedValue = value / 100;
+      const scaledValue = chartMargin + normalizedValue * (1 - chartMargin * 2);
+      const y = volumeTopY + (1 - scaledValue) * volumeHeight;
+      ctx.fillText(`${value}%`, padding - 5, y);
+      // tick mark 그리기
+      ctx.beginPath();
+      ctx.moveTo(padding - 5, y);
+      ctx.lineTo(padding, y);
+      ctx.stroke();
     }
   }
 
@@ -870,7 +910,13 @@ function drawVolumeChart(
       }
     });
     
+    // Volume 평균선 그리기 (클리핑 적용)
     if (avgPoints.length > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(padding, volumeTopY, width - padding * 2, volumeHeight);
+      ctx.clip();
+      
       ctx.strokeStyle = '#000000';
       ctx.lineWidth = 2;
       ctx.setLineDash([3, 2]);
@@ -900,6 +946,7 @@ function drawVolumeChart(
       
       ctx.setLineDash([]);
       ctx.globalAlpha = 1.0;
+      ctx.restore();
     }
   }
 }
@@ -932,10 +979,13 @@ function drawOBVChart(
     return padding + ((time - minTime) / timeRange) * (width - padding * 2);
   };
 
+  // 상하 10%씩 마진 적용
+  const chartMargin = 0.1;
   const getY = (value: number, minVal: number, maxVal: number): number => {
     const range = maxVal - minVal || 1;
     const normalizedValue = (value - minVal) / range;
-    return obvTopY + (1 - normalizedValue) * obvHeight;
+    const scaledValue = chartMargin + normalizedValue * (1 - chartMargin * 2);
+    return obvTopY + (1 - scaledValue) * obvHeight;
   };
 
   // 배경 (OBV 영역)
@@ -1127,16 +1177,25 @@ function drawOBVChart(
     colorIndex++;
   });
 
-  // Y축 레이블 (OBV) - 100%가 위, 0%가 아래
+  // Y축 레이블 (OBV) - 0~100% 레이블을 마진 적용된 위치에 표시
   if (!hideValues) {
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#000000';
     ctx.font = '12px Arial';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 1;
     for (let i = 0; i <= 5; i++) {
-      const value = 100 - i * 20;
-      const y = obvTopY + (i / 5) * obvHeight;
-      ctx.fillText(`${value}%`, padding - 10, y);
+      const value = 100 - i * 20; // 100%, 80%, 60%, 40%, 20%, 0%
+      const normalizedValue = value / 100;
+      const scaledValue = chartMargin + normalizedValue * (1 - chartMargin * 2);
+      const y = obvTopY + (1 - scaledValue) * obvHeight;
+      ctx.fillText(`${value}%`, padding - 5, y);
+      // tick mark 그리기
+      ctx.beginPath();
+      ctx.moveTo(padding - 5, y);
+      ctx.lineTo(padding, y);
+      ctx.stroke();
     }
   }
   
@@ -1224,7 +1283,13 @@ function drawOBVChart(
       }
     });
     
+    // OBV 평균선 그리기 (클리핑 적용)
     if (avgPoints.length > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(padding, obvTopY, width - padding * 2, obvHeight);
+      ctx.clip();
+      
       ctx.strokeStyle = '#000000';
       ctx.lineWidth = 2;
       ctx.setLineDash([3, 2]);
@@ -1254,6 +1319,7 @@ function drawOBVChart(
       
       ctx.setLineDash([]);
       ctx.globalAlpha = 1.0;
+      ctx.restore();
     }
   }
 }
@@ -1264,12 +1330,14 @@ function drawEventMarkers(
   height: number,
   events: EventMarker[],
   sortedTimes: number[],
-  chartBottom: number
+  chartBottom: number,
+  displayMinTime?: number,
+  displayMaxTime?: number
 ) {
   if (!ctx || sortedTimes.length === 0 || events.length === 0) return;
 
-  const minTime = sortedTimes[0];
-  const maxTime = sortedTimes[sortedTimes.length - 1];
+  const minTime = displayMinTime ?? sortedTimes[0];
+  const maxTime = displayMaxTime ?? sortedTimes[sortedTimes.length - 1];
   const timeRange = maxTime - minTime || 1;
 
   const getX = (time: number): number => {
@@ -1289,13 +1357,14 @@ function drawEventMarkers(
       ctx.lineTo(x, chartBottom);  // 차트 하단까지 그리기
       ctx.stroke();
 
+      // 레이블을 선 아래쪽 방향으로 그리기
       ctx.save();
-      ctx.translate(x, padding - 10);
-      ctx.rotate(-Math.PI / 4);
+      ctx.translate(x, padding + 10);
+      ctx.rotate(Math.PI / 4);  // 아래쪽 방향 (45도)
       ctx.fillStyle = eventColor;
       ctx.font = 'bold 12px Arial';
-      ctx.textAlign = 'right';
-      ctx.fillText(event.label, 0, 0);
+      ctx.textAlign = 'left';
+      ctx.fillText(event.label, 5, 0);
       ctx.restore();
     }
   });
@@ -1305,41 +1374,81 @@ function drawXAxisLabels(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
-  sortedTimes: number[]
+  sortedTimes: number[],
+  chartBottom?: number,  // 차트 영역의 실제 하단 위치
+  displayMinTime?: number,
+  displayMaxTime?: number
 ) {
   if (!ctx || sortedTimes.length === 0) return;
 
-  const minTime = sortedTimes[0];
-  const maxTime = sortedTimes[sortedTimes.length - 1];
+  const minTime = displayMinTime ?? sortedTimes[0];
+  const maxTime = displayMaxTime ?? sortedTimes[sortedTimes.length - 1];
   const timeRange = maxTime - minTime || 1;
 
   const getX = (time: number): number => {
     return padding + ((time - minTime) / timeRange) * (width - padding * 2);
   };
 
+  // X축 하단 경계선 위치 (차트 영역의 실제 하단)
+  const baselineY = chartBottom ?? (height - padding);
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padding, baselineY);
+  ctx.lineTo(width - padding, baselineY);
+  ctx.stroke();
+
   // X축 레이블
   ctx.fillStyle = '#000000';
   ctx.font = '12px Arial';
-  ctx.textAlign = 'left';
-  const firstTime = sortedTimes[0];
-  const firstX = getX(firstTime);
-  const firstDate = new Date(firstTime * 1000);
-  ctx.fillText(`${firstDate.getMonth() + 1}/${firstDate.getDate()}`, firstX, height - padding + 20);
-
-  ctx.textAlign = 'center';
-  for (let i = 0; i < sortedTimes.length; i += Math.max(1, Math.floor(sortedTimes.length / 10))) {
-    if (i === 0 || i === sortedTimes.length - 1) continue;
-    const time = sortedTimes[i];
-    const x = getX(time);
+  
+  const tickYStart = baselineY; // 경계선에서 시작
+  const tickYEnd = baselineY + 6; // 아래로 6px
+  const labelY = baselineY + 13; // 레이블 위치
+  
+  // 표시 범위 내의 시간들만 필터링
+  const visibleTimes = sortedTimes.filter(t => t >= minTime && t <= maxTime);
+  if (visibleTimes.length === 0) return;
+  
+  // 00:00:00 기준으로 날짜 시작점들 찾기 (KST 기준)
+  const dayStartTimes: number[] = [];
+  const seenDays = new Set<string>();
+  
+  visibleTimes.forEach(time => {
     const date = new Date(time * 1000);
-    ctx.fillText(`${date.getMonth() + 1}/${date.getDate()}`, x, height - padding + 20);
+    const dayKey = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+    if (!seenDays.has(dayKey)) {
+      seenDays.add(dayKey);
+      // 해당 날짜의 00:00:00 시간 계산
+      const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0);
+      const dayStartTime = dayStart.getTime() / 1000;
+      // 표시 범위 내에 있으면 추가
+      if (dayStartTime >= minTime && dayStartTime <= maxTime) {
+        dayStartTimes.push(dayStartTime);
+      }
+    }
+  });
+  
+  // 적절한 간격으로 날짜 레이블 그리기
+  const maxLabels = 12;
+  const step = Math.max(1, Math.ceil(dayStartTimes.length / maxLabels));
+  
+  ctx.textAlign = 'center';
+  for (let i = 0; i < dayStartTimes.length; i += step) {
+    const time = dayStartTimes[i];
+    const x = getX(time);
+    
+    // X 좌표가 차트 영역 내에 있는지 확인
+    if (x < padding || x > width - padding) continue;
+    
+    const date = new Date(time * 1000);
+    ctx.fillText(`${date.getMonth() + 1}/${date.getDate()}`, x, labelY);
+    // tick mark (경계선에서 아래로)
+    ctx.beginPath();
+    ctx.moveTo(x, tickYStart);
+    ctx.lineTo(x, tickYEnd);
+    ctx.stroke();
   }
-
-  const lastTime = sortedTimes[sortedTimes.length - 1];
-  const lastX = getX(lastTime);
-  const lastDate = new Date(lastTime * 1000);
-  ctx.textAlign = 'right';
-  ctx.fillText(`${lastDate.getMonth() + 1}/${lastDate.getDate()}`, lastX, height - padding + 20);
 }
 
 function drawOBVChartOld(
@@ -1739,20 +1848,21 @@ function renderWithCrosshair() {
   }
 
   // 이벤트 마커 (전체 패널에 걸쳐)
+  // 차트 영역의 실제 하단 계산
+  let chartBottom = priceChartHeight;
+  if (showVolume && volumeChartHeight > 0) {
+    chartBottom = volumeTopY + volumeChartHeight;
+  }
+  if (showOBV && obvChartHeight > 0) {
+    chartBottom = obvTopY + obvChartHeight;
+  }
+  
   if (showEvents) {
-    // 차트 영역의 실제 하단 계산
-    let chartBottom = priceChartHeight;
-    if (showVolume && volumeChartHeight > 0) {
-      chartBottom = volumeTopY + volumeChartHeight;
-    }
-    if (showOBV && obvChartHeight > 0) {
-      chartBottom = obvTopY + obvChartHeight;
-    }
-    drawEventMarkers(ctx, width, totalHeight, currentData.events, sortedTimes, chartBottom);
+    drawEventMarkers(ctx, width, totalHeight, currentData.events, sortedTimes, chartBottom, displayMinTime, displayMaxTime);
   }
 
-  // X축 레이블 (항상 표시)
-  drawXAxisLabels(ctx, width, totalHeight, sortedTimes);
+  // X축 레이블 (항상 표시) - 차트 하단 위치 전달
+  drawXAxisLabels(ctx, width, totalHeight, sortedTimes, chartBottom, displayMinTime, displayMaxTime);
 
   // 포인트 그리기 (showPoints가 켜져있을 때)
   if (showPoints) {
@@ -1796,7 +1906,7 @@ function renderWithCrosshair() {
 
   // 크로스헤어 그리기 (전체 영역) - 드래그 중이 아닐 때만
   if (mouseX !== null && mouseY !== null && !isDragging && !isPanning) {
-    drawCrosshair(ctx, width, totalHeight, mouseX, mouseY, priceChartHeight, volumeTopY, volumeChartHeight, obvTopY, obvChartHeight, showVolume, showOBV);
+    drawCrosshair(ctx, width, totalHeight, mouseX, mouseY, priceChartHeight, volumeTopY, volumeChartHeight, obvTopY, obvChartHeight, showVolume, showOBV, displayMinTime, displayMaxTime);
   }
 }
 
@@ -1904,6 +2014,7 @@ function drawDataPoints(
   const pointRadius = 2;
   const clipLeft = padding;
   const clipRight = width - padding;
+  const chartMargin = 0.1; // 10% 마진
 
   dataMap.forEach((data, symbol) => {
     if (!visibleTickers.has(symbol)) {
@@ -1928,7 +2039,8 @@ function drawDataPoints(
         if (x < clipLeft || x > clipRight) return;
         
         const normalizedValue = (d.close - priceMinMax.min) / (priceMinMax.max - priceMinMax.min || 1);
-        const y = graphTop + (1 - normalizedValue) * graphHeight;
+        const scaledValue = chartMargin + normalizedValue * (1 - chartMargin * 2);
+        const y = graphTop + (1 - scaledValue) * graphHeight;
 
         ctx.fillStyle = color;
         ctx.beginPath();
@@ -1952,7 +2064,8 @@ function drawDataPoints(
         if (x < clipLeft || x > clipRight) return;
         
         const normalizedValue = (volume - volumeMinMax.min) / (volumeMinMax.max - volumeMinMax.min || 1);
-        const y = volumeTopY + (1 - normalizedValue) * volumeHeight;
+        const scaledValue = chartMargin + normalizedValue * (1 - chartMargin * 2);
+        const y = volumeTopY + (1 - scaledValue) * volumeHeight;
 
         ctx.fillStyle = color;
         ctx.beginPath();
@@ -1976,7 +2089,8 @@ function drawDataPoints(
         if (x < clipLeft || x > clipRight) return;
         
         const normalizedValue = (obvValues[i] - obvData.min) / (obvData.max - obvData.min || 1);
-        const y = obvTopY + (1 - normalizedValue) * obvHeight;
+        const scaledValue = chartMargin + normalizedValue * (1 - chartMargin * 2);
+        const y = obvTopY + (1 - scaledValue) * obvHeight;
 
         ctx.fillStyle = color;
         ctx.beginPath();
@@ -2052,7 +2166,9 @@ function drawCrosshair(
   obvTopY: number,
   obvHeight: number,
   hasVolume: boolean,
-  hasOBV: boolean
+  hasOBV: boolean,
+  displayMinTime?: number,
+  displayMaxTime?: number
 ) {
   // 그래프 영역 내부인지 확인 (X축: padding ~ width-padding)
   if (x < padding || x > width - padding) return;
@@ -2106,8 +2222,9 @@ function drawCrosshair(
   const timePercent = (x - padding) / (width - padding * 2);
   
   if (currentSortedTimes.length > 0) {
-    const minTime = currentSortedTimes[0];
-    const maxTime = currentSortedTimes[currentSortedTimes.length - 1];
+    // 줄 상태에서는 displayMinTime/displayMaxTime 사용
+    const minTime = displayMinTime ?? currentSortedTimes[0];
+    const maxTime = displayMaxTime ?? currentSortedTimes[currentSortedTimes.length - 1];
     const timeRange = maxTime - minTime || 1;
     const currentTime = minTime + timePercent * timeRange;
     const date = new Date(currentTime * 1000);
@@ -2119,33 +2236,42 @@ function drawCrosshair(
     ctx.fillText(dateStr, x, height - padding + 35);
   }
 
-  // 값(%) 표시 (좌측) - 영역별로 구분
+  // 값(%) 표시 (좌측) - 영역별로 구분 (10% 마진 고려)
   let valueStr = '';
+  const chartMargin = 0.1; // 10% 마진
   
   // Price 영역: padding ~ priceHeight (하단 padding 없음)
   if (y >= padding && y <= priceHeight) {
-    // Price 영역
+    // Price 영역 - 마진 적용된 Y값에서 실제 퍼센트 계산
     const graphHeight = priceHeight - padding;
-    const valuePercent = 100 - ((y - padding) / graphHeight) * 100;
+    // scaledValue = chartMargin + normalizedValue * (1 - chartMargin * 2)
+    // y = graphBottom - scaledValue * graphHeight
+    // scaledValue = (graphBottom - y) / graphHeight = (priceHeight - y) / graphHeight
+    const scaledValue = (priceHeight - y) / graphHeight;
+    // normalizedValue = (scaledValue - chartMargin) / (1 - chartMargin * 2)
+    const normalizedValue = (scaledValue - chartMargin) / (1 - chartMargin * 2);
+    const valuePercent = normalizedValue * 100;
     valueStr = `${valuePercent.toFixed(1)}%`;
   } else if (hasVolume && volumeHeight > 0 && y >= volumeTopY && y <= volumeTopY + volumeHeight) {
-    // Volume 영역
-    const localY = y - volumeTopY;
-    const valuePercent = 100 - (localY / volumeHeight) * 100;
+    // Volume 영역 - 마진 적용
+    const scaledValue = 1 - (y - volumeTopY) / volumeHeight;
+    const normalizedValue = (scaledValue - chartMargin) / (1 - chartMargin * 2);
+    const valuePercent = normalizedValue * 100;
     valueStr = `${valuePercent.toFixed(1)}%`;
   } else if (hasOBV && obvHeight > 0 && y >= obvTopY && y <= obvTopY + obvHeight) {
-    // OBV 영역
-    const localY = y - obvTopY;
-    const valuePercent = 100 - (localY / obvHeight) * 100;
+    // OBV 영역 - 마진 적용
+    const scaledValue = 1 - (y - obvTopY) / obvHeight;
+    const normalizedValue = (scaledValue - chartMargin) / (1 - chartMargin * 2);
+    const valuePercent = normalizedValue * 100;
     valueStr = `${valuePercent.toFixed(1)}%`;
   }
   
   if (valueStr) {
     ctx.fillStyle = '#333333';
     ctx.font = 'bold 12px Arial';
-    ctx.textAlign = 'right';
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(valueStr, padding - 15, y);
+    ctx.fillText(valueStr, width - padding + 5, y);
   }
 }
 
