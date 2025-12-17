@@ -20,10 +20,11 @@ module.exports = {
         directory: path.resolve(__dirname, 'dist/web'),
       }
     ],
-    host: 'localhost',
+    host: '0.0.0.0',
     port: 5173,
     hot: true,
-    open: false
+    open: false,
+    allowedHosts: 'all'
   },
   module: {
     rules: [

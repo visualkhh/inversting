@@ -5,13 +5,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Overlay Chart (Web)</title>
   <style>
+    :root {
+      --primary-color: #3b82f6;
+      --primary-hover: #2563eb;
+      --bg-color: #f8fafc;
+      --card-bg: #ffffff;
+      --border-color: #e2e8f0;
+      --text-primary: #1e293b;
+      --text-secondary: #64748b;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+      --shadow-md: 0 2px 4px rgba(0,0,0,0.08);
+      --radius-sm: 4px;
+      --radius-md: 8px;
+    }
     html, body {
       margin: 0;
       padding: 0;
       width: 100%;
       height: 100%;
-      font-family: Arial, sans-serif;
-      background: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg-color);
     }
     #app {
       width: 100%;
@@ -22,7 +35,7 @@
     #chart-container {
       flex: 1;
       position: relative;
-      padding: 0 8px;
+      padding: 0 12px 12px;
       overflow: hidden;
     }
     #chart {
@@ -30,63 +43,232 @@
       height: 100%;
       display: block;
       border: 0;
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-md);
     }
-    #status {
-      padding: 8px 12px;
-      font-size: 12px;
-      color: #333;
-      border-bottom: 1px solid #e5e5e5;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-    }
-    #status label {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      cursor: pointer;
-      user-select: none;
-      color: #222;
-      font-weight: 600;
-      white-space: nowrap;
-    }
-    #ticker-toggles {
-      padding: 8px 12px;
-      border-bottom: 1px solid #e5e5e5;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-    }
-    #ticker-list {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-    #ticker-list label {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      cursor: pointer;
-      user-select: none;
-      color: #222;
-      font-weight: 600;
-      white-space: nowrap;
-    }
-    /* Range Slider */
-    #range-slider-container {
-      padding: 8px 12px;
-      border-bottom: 1px solid #e5e5e5;
+    /* Control Panel Common */
+    .control-panel {
+      background: var(--card-bg);
+      padding: 10px 16px;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       gap: 12px;
+      border-bottom: 1px solid var(--border-color);
     }
-    #range-slider-container span {
-      font-weight: 600;
-      color: #222;
+    .control-panel:first-child {
+      padding-top: 12px;
+    }
+    .control-label {
       font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+      margin-right: 4px;
+    }
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px;
+      background: var(--bg-color);
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-color);
+    }
+    .control-divider {
+      width: 1px;
+      height: 20px;
+      background: var(--border-color);
+      margin: 0 4px;
+    }
+    /* Checkbox & Radio Styles */
+    .control-panel label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 13px;
+      color: var(--text-primary);
+      font-weight: 500;
+      white-space: nowrap;
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+      transition: background 0.15s ease;
+    }
+    .control-panel label:hover {
+      background: var(--bg-color);
+    }
+    .control-panel input[type="checkbox"],
+    .control-panel input[type="radio"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--primary-color);
+      cursor: pointer;
+    }
+    /* Status Panel */
+    #status {
+      background: var(--card-bg);
+      padding: 10px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      border-bottom: 1px solid var(--border-color);
+    }
+    #status-text {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--primary-color);
+      margin-right: 12px;
+      padding: 4px 10px;
+      background: rgba(59, 130, 246, 0.1);
+      border-radius: var(--radius-sm);
+    }
+    #status label {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 12px;
+      color: var(--text-primary);
+      font-weight: 500;
+      white-space: nowrap;
+      padding: 5px 10px;
+      border-radius: var(--radius-sm);
+      background: var(--bg-color);
+      border: 1px solid transparent;
+      transition: all 0.15s ease;
+    }
+    #status label:hover {
+      border-color: var(--border-color);
+      background: var(--card-bg);
+    }
+    #status input[type="checkbox"],
+    #status input[type="radio"] {
+      width: 14px;
+      height: 14px;
+      accent-color: var(--primary-color);
+      cursor: pointer;
+    }
+    #status .radio-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      background: var(--bg-color);
+      border-radius: var(--radius-md);
+      padding: 2px;
+      border: 1px solid var(--border-color);
+    }
+    #status .radio-group label {
+      background: transparent;
+      border: none;
+      padding: 4px 10px;
+      border-radius: var(--radius-sm);
+    }
+    #status .radio-group label:has(input:checked) {
+      background: var(--primary-color);
+      color: white;
+    }
+    #status .radio-group label:hover:not(:has(input:checked)) {
+      background: rgba(59, 130, 246, 0.1);
+    }
+    /* Ticker Toggles Panel */
+    #ticker-toggles {
+      background: var(--card-bg);
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+    #ticker-toggles > span {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    #ticker-toggles > label {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 12px;
+      color: var(--text-primary);
+      font-weight: 600;
+      white-space: nowrap;
+      padding: 5px 12px;
+      border-radius: var(--radius-sm);
+      background: var(--primary-color);
+      color: white;
+      border: 1px solid var(--primary-color);
+      transition: all 0.15s ease;
+    }
+    #ticker-toggles > label:hover {
+      background: var(--primary-hover);
+      border-color: var(--primary-hover);
+    }
+    #ticker-toggles > label input {
+      width: 14px;
+      height: 14px;
+      accent-color: white;
+    }
+    #ticker-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    #ticker-list label {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 12px;
+      color: var(--text-primary);
+      font-weight: 500;
+      white-space: nowrap;
+      padding: 5px 10px;
+      border-radius: var(--radius-sm);
+      background: var(--bg-color);
+      border: 1px solid var(--border-color);
+      transition: all 0.15s ease;
+    }
+    #ticker-list label:hover {
+      border-color: var(--primary-color);
+      background: rgba(59, 130, 246, 0.05);
+    }
+    #ticker-list label:has(input:checked) {
+      border-color: var(--primary-color);
+      background: rgba(59, 130, 246, 0.1);
+    }
+    #ticker-list input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      accent-color: var(--primary-color);
+    }
+    /* Range Slider Container */
+    #range-slider-container {
+      background: var(--card-bg);
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 16px;
+    }
+    #range-slider-container > span:first-child {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
       white-space: nowrap;
     }
     .range-slider-wrapper {
@@ -94,31 +276,32 @@
       flex: 1;
       min-width: 200px;
       max-width: 600px;
-      height: 30px;
+      height: 32px;
     }
     .range-slider-track {
       position: absolute;
       top: 50%;
       transform: translateY(-50%);
       width: 100%;
-      height: 6px;
-      background: #ddd;
-      border-radius: 3px;
+      height: 8px;
+      background: var(--bg-color);
+      border-radius: 4px;
+      border: 1px solid var(--border-color);
     }
     .range-slider-range {
       position: absolute;
       top: 50%;
       transform: translateY(-50%);
-      height: 6px;
-      background: #4a90d9;
-      border-radius: 3px;
+      height: 8px;
+      background: linear-gradient(90deg, var(--primary-color), #60a5fa);
+      border-radius: 4px;
     }
     .range-slider-wrapper input[type="range"] {
       position: absolute;
       top: 50%;
       transform: translateY(-50%);
       width: 100%;
-      height: 6px;
+      height: 8px;
       -webkit-appearance: none;
       appearance: none;
       background: transparent;
@@ -128,52 +311,70 @@
     .range-slider-wrapper input[type="range"]::-webkit-slider-thumb {
       -webkit-appearance: none;
       appearance: none;
-      width: 18px;
-      height: 18px;
-      background: #4a90d9;
-      border: 2px solid #fff;
+      width: 20px;
+      height: 20px;
+      background: var(--card-bg);
+      border: 3px solid var(--primary-color);
       border-radius: 50%;
       cursor: pointer;
       pointer-events: auto;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      box-shadow: var(--shadow-md);
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .range-slider-wrapper input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.1);
+      box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
     }
     .range-slider-wrapper input[type="range"]::-moz-range-thumb {
-      width: 18px;
-      height: 18px;
-      background: #4a90d9;
-      border: 2px solid #fff;
+      width: 20px;
+      height: 20px;
+      background: var(--card-bg);
+      border: 3px solid var(--primary-color);
       border-radius: 50%;
       cursor: pointer;
       pointer-events: auto;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      box-shadow: var(--shadow-md);
     }
     #range-values {
-      font-size: 11px;
-      color: #666;
-      min-width: 180px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--primary-color);
+      min-width: 100px;
+      padding: 6px 12px;
+      background: rgba(59, 130, 246, 0.1);
+      border-radius: var(--radius-sm);
+      text-align: center;
     }
     /* 모바일 대응 */
     @media (max-width: 768px) {
       #status {
-        font-size: 11px;
-        gap: 6px;
-        padding: 6px 8px;
+        gap: 4px;
+        padding: 8px 12px;
       }
       #status label {
         font-size: 11px;
+        padding: 4px 8px;
         gap: 4px;
       }
-      #ticker-toggles {
+      #status-text {
         font-size: 11px;
+        padding: 3px 8px;
+      }
+      #ticker-toggles {
         gap: 6px;
-        padding: 6px 8px;
+        padding: 8px 12px;
       }
       #ticker-list label {
         font-size: 11px;
-        gap: 4px;
+        padding: 4px 8px;
+        gap: 3px;
+      }
+      #range-slider-container {
+        gap: 10px;
+        padding: 10px 12px;
       }
       #chart-container {
-        padding: 0 4px;
+        padding: 0 8px 8px;
       }
     }
   </style>
@@ -183,13 +384,13 @@
     <div id="status">
       <span id="status-text">Loading data…</span>
       <label for="toggle-events" id="toggle-events-label">
-        <input type="checkbox" id="toggle-events" /> 이벤트 표시
+        <input type="checkbox" id="toggle-events" /> 이벤트
       </label>
       <label for="toggle-candles" id="toggle-candles-label">
-        <input type="checkbox" id="toggle-candles" /> 캔들 표시
+        <input type="checkbox" id="toggle-candles" /> 캔들
       </label>
       <label for="toggle-gaps" id="toggle-gaps-label">
-        <input type="checkbox" id="toggle-gaps" /> 빈곳보기
+        <input type="checkbox" id="toggle-gaps" /> 빈곳
       </label>
       <label for="toggle-volume" id="toggle-volume-label">
         <input type="checkbox" id="toggle-volume" /> Volume
@@ -197,37 +398,39 @@
       <label for="toggle-obv" id="toggle-obv-label">
         <input type="checkbox" id="toggle-obv" /> OBV
       </label>
-      <label for="toggle-smooth" id="toggle-smooth-label">
-        <input type="checkbox" id="toggle-smooth" /> 부드러운 곱선
-      </label>
+      <span class="radio-group">
+        <label><input type="radio" name="smooth-mode" value="none" checked /> 직선</label>
+        <label><input type="radio" name="smooth-mode" value="smooth" /> 부드럽게</label>
+        <label><input type="radio" name="smooth-mode" value="open" /> 시가반영</label>
+      </span>
       <label for="toggle-average" id="toggle-average-label">
         <input type="checkbox" id="toggle-average" /> 평균선
       </label>
       <label for="toggle-hide-values" id="toggle-hide-values-label">
-        <input type="checkbox" id="toggle-hide-values" /> 수치 숨기기
+        <input type="checkbox" id="toggle-hide-values" /> 수치숨김
       </label>
       <label for="toggle-daily-group" id="toggle-daily-group-label">
-        <input type="checkbox" id="toggle-daily-group" /> 일자별 그룹
+        <input type="checkbox" id="toggle-daily-group" /> 일자그룹
       </label>
       <label for="toggle-hide-lines" id="toggle-hide-lines-label">
-        <input type="checkbox" id="toggle-hide-lines" /> 실선 숨기기
+        <input type="checkbox" id="toggle-hide-lines" /> 실선숨김
       </label>
-      <label for="toggle-hide-grid" id="toggle-hide-grid-label">
-        <input type="checkbox" id="toggle-hide-grid" /> 그리드 숨기기
+      <label for="toggle-show-grid" id="toggle-show-grid-label">
+        <input type="checkbox" id="toggle-show-grid" /> 그리드
       </label>
       <label for="toggle-show-points" id="toggle-show-points-label">
-        <input type="checkbox" id="toggle-show-points" /> 포인트 보기
+        <input type="checkbox" id="toggle-show-points" /> 포인트
       </label>
     </div>
     <div id="ticker-toggles">
-      <span style="font-weight: 600; color: #222;">티커:</span>
+      <span>티커</span>
       <label id="toggle-all-tickers-label">
         <input type="checkbox" id="toggle-all-tickers" checked /> 전체
       </label>
       <div id="ticker-list"></div>
     </div>
     <div id="range-slider-container">
-      <span>X축 범위:</span>
+      <span>X축 범위</span>
       <div class="range-slider-wrapper">
         <div class="range-slider-track"></div>
         <div class="range-slider-range" id="range-slider-range"></div>

@@ -22,12 +22,12 @@ const toggleCandlesEl = document.getElementById('toggle-candles') as HTMLInputEl
 const toggleGapsEl = document.getElementById('toggle-gaps') as HTMLInputElement | null;
 const toggleVolumeEl = document.getElementById('toggle-volume') as HTMLInputElement | null;
 const toggleOBVEl = document.getElementById('toggle-obv') as HTMLInputElement | null;
-const toggleSmoothEl = document.getElementById('toggle-smooth') as HTMLInputElement | null;
+const smoothModeRadios = document.querySelectorAll('input[name="smooth-mode"]') as NodeListOf<HTMLInputElement>;
 const toggleAverageEl = document.getElementById('toggle-average') as HTMLInputElement | null;
 const toggleHideValuesEl = document.getElementById('toggle-hide-values') as HTMLInputElement | null;
 const toggleDailyGroupEl = document.getElementById('toggle-daily-group') as HTMLInputElement | null;
 const toggleHideLinesEl = document.getElementById('toggle-hide-lines') as HTMLInputElement | null;
-const toggleHideGridEl = document.getElementById('toggle-hide-grid') as HTMLInputElement | null;
+const toggleShowGridEl = document.getElementById('toggle-show-grid') as HTMLInputElement | null;
 const toggleShowPointsEl = document.getElementById('toggle-show-points') as HTMLInputElement | null;
 const rangeMinEl = document.getElementById('range-min') as HTMLInputElement | null;
 const rangeMaxEl = document.getElementById('range-max') as HTMLInputElement | null;
@@ -135,10 +135,12 @@ function drawSimpleOverlayChart(
   fillGaps = false,
   showOBV = false,
   priceChartHeight?: number,
-  useSmooth = false,
+  smoothMode: 'none' | 'smooth' | 'open' = 'none',
   showAverage = false,
   hideValues = false,
-  hideLines = false
+  hideLines = false,
+  displayMinTime?: number,
+  displayMaxTime?: number
 ) {
   const actualHeight = priceChartHeight || height;
   const allTimePoints = new Set<number>();
@@ -165,17 +167,20 @@ function drawSimpleOverlayChart(
   const sortedTimes = Array.from(allTimePoints).sort((a, b) => a - b);
   if (sortedTimes.length === 0) return;
 
-  const minTime = sortedTimes[0];
-  const maxTime = sortedTimes[sortedTimes.length - 1];
+  // displayMinTime/displayMaxTime이 전달되면 해당 범위로 X축 고정
+  const minTime = displayMinTime ?? sortedTimes[0];
+  const maxTime = displayMaxTime ?? sortedTimes[sortedTimes.length - 1];
   const timeRange = maxTime - minTime || 1;
 
   const minMaxBySymbol = new Map<string, { min: number; max: number }>();
   dataBySymbol.forEach((points, symbol) => {
     const closes = points.map(p => p.close);
-    minMaxBySymbol.set(symbol, {
-      min: Math.min(...closes),
-      max: Math.max(...closes)
-    });
+    if (closes.length > 0) {
+      minMaxBySymbol.set(symbol, {
+        min: Math.min(...closes),
+        max: Math.max(...closes)
+      });
+    }
   });
 
   const getX = (time: number): number => {
@@ -205,7 +210,7 @@ function drawSimpleOverlayChart(
   const gridStepX = gridWidth / gridDivisions;
   const gridStepY = gridHeight / gridDivisions;
   
-  if (!hideGrid) {
+  if (showGrid) {
     ctx.strokeStyle = '#CCCCCC';
     ctx.lineWidth = 1;
     
@@ -333,6 +338,12 @@ function drawSimpleOverlayChart(
 
     // 라인 연결
     if (!hideLines) {
+      // 클리핑 영역 설정 (Y축 레이블 영역 제외)
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(padding, graphTop, width - padding * 2, graphHeight);
+      ctx.clip();
+      
       ctx.strokeStyle = color;
       ctx.lineWidth = 1;
       ctx.lineJoin = 'round';
@@ -360,11 +371,17 @@ function drawSimpleOverlayChart(
         const prevY = getY(prevPoint.close, minMax.min, minMax.max);
         ctx.moveTo(prevX, prevY);
         
-        if (useSmooth) {
+        if (smoothMode !== 'none') {
           const cp1x = prevX + (x - prevX) / 3;
           const cp1y = prevY;
           const cp2x = prevX + (x - prevX) * 2 / 3;
-          const cp2y = y;
+          // smoothMode === 'open'이면 현재 포인트의 open 값을 제어점으로 활용
+          let cp2y: number;
+          if (smoothMode === 'open' && point.open && point.open > 0) {
+            cp2y = getY(point.open, minMax.min, minMax.max);
+          } else {
+            cp2y = y;
+          }
           ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
         } else {
           ctx.lineTo(x, y);
@@ -377,16 +394,20 @@ function drawSimpleOverlayChart(
         ctx.beginPath();
         ctx.moveTo(x, y);
       } else {
-        if (useSmooth && i > 0) {
-          // Catmull-Rom 스플라인 근사
+        if (smoothMode !== 'none' && i > 0) {
           const prevX = getX(prevPoint.time);
           const prevY = getY(prevPoint.close, minMax.min, minMax.max);
           
-          // 제어점 계산: 이전과 현재 점의 1/3 지점
           const cp1x = prevX + (x - prevX) / 3;
           const cp1y = prevY;
           const cp2x = prevX + (x - prevX) * 2 / 3;
-          const cp2y = y;
+          // smoothMode === 'open'이면 현재 포인트의 open 값을 제어점으로 활용
+          let cp2y: number;
+          if (smoothMode === 'open' && point.open && point.open > 0) {
+            cp2y = getY(point.open, minMax.min, minMax.max);
+          } else {
+            cp2y = y;
+          }
           
           ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
         } else {
@@ -395,6 +416,7 @@ function drawSimpleOverlayChart(
       }
     }
       ctx.stroke();
+      ctx.restore(); // 클리핑 해제
     }
 
     colorIndex++;
@@ -512,7 +534,7 @@ function drawSimpleOverlayChart(
         
         if (i === 0) {
           ctx.moveTo(x, y);
-        } else if (useSmooth && i > 0) {
+        } else if (smoothMode !== 'none' && i > 0) {
           const prevPoint = avgPoints[i - 1];
           const prevX = getX(prevPoint.time);
           const prevY = prevPoint.avgY;
@@ -546,12 +568,15 @@ function drawVolumeChart(
   useSmooth = false,
   showAverage = false,
   hideValues = false,
-  hideLines = false
+  hideLines = false,
+  displayMinTime?: number,
+  displayMaxTime?: number
 ) {
   if (!ctx || sortedTimes.length === 0) return;
 
-  const minTime = sortedTimes[0];
-  const maxTime = sortedTimes[sortedTimes.length - 1];
+  // displayMinTime/displayMaxTime이 전달되면 해당 범위로 X축 고정
+  const minTime = displayMinTime ?? sortedTimes[0];
+  const maxTime = displayMaxTime ?? sortedTimes[sortedTimes.length - 1];
   const timeRange = maxTime - minTime || 1;
 
   const getX = (time: number): number => {
@@ -575,7 +600,7 @@ function drawVolumeChart(
   const gridStepX = gridWidth / gridDivisions;
   const gridStepY = gridHeight / gridDivisions;
   
-  if (!hideGrid) {
+  if (showGrid) {
     ctx.strokeStyle = '#CCCCCC';
     ctx.lineWidth = 1;
     
@@ -641,6 +666,12 @@ function drawVolumeChart(
     }
     
     if (!hideLines) {
+      // 클리핑 영역 설정 (Y축 레이블 영역 제외)
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(padding, volumeTopY, width - padding * 2, volumeHeight);
+      ctx.clip();
+      
       ctx.strokeStyle = volumeColor;
       ctx.lineWidth = 1;
       ctx.lineJoin = 'round';
@@ -652,7 +683,7 @@ function drawVolumeChart(
       let prevValidIndex = -1;
     for (let i = 0; i < data.length; i++) {
       const time = new Date(data[i].timestamp).getTime() / 1000;
-      if (time >= minTime && time <= maxTime) {
+      // 모든 데이터 포인트를 그림 (앞뒤 추가 포인트 포함)
         const volume = data[i].volume || 0;
         const x = getX(time);
         const y = getY(volume, minMax.min, minMax.max);
@@ -731,11 +762,11 @@ function drawVolumeChart(
           }
           prevValidIndex = i;
         }
-      }
     }
       
       ctx.stroke();
       ctx.setLineDash([]);
+      ctx.restore(); // 클리핑 해제
     }
     colorIndex++;
   });
@@ -878,12 +909,15 @@ function drawOBVChart(
   useSmooth = false,
   showAverage = false,
   hideValues = false,
-  hideLines = false
+  hideLines = false,
+  displayMinTime?: number,
+  displayMaxTime?: number
 ) {
   if (!ctx || sortedTimes.length === 0) return;
 
-  const minTime = sortedTimes[0];
-  const maxTime = sortedTimes[sortedTimes.length - 1];
+  // displayMinTime/displayMaxTime이 전달되면 해당 범위로 X축 고정
+  const minTime = displayMinTime ?? sortedTimes[0];
+  const maxTime = displayMaxTime ?? sortedTimes[sortedTimes.length - 1];
   const timeRange = maxTime - minTime || 1;
 
   const getX = (time: number): number => {
@@ -907,7 +941,7 @@ function drawOBVChart(
   const gridStepX = gridWidth / gridDivisions;
   const gridStepY = gridHeight / gridDivisions;
   
-  if (!hideGrid) {
+  if (showGrid) {
     ctx.strokeStyle = '#CCCCCC';
     ctx.lineWidth = 1;
     
@@ -978,6 +1012,12 @@ function drawOBVChart(
     const obvColor = colors[colorIndex % colors.length];
     
     if (!hideLines) {
+      // 클리핑 영역 설정 (Y축 레이블 영역 제외)
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(padding, obvTopY, width - padding * 2, obvHeight);
+      ctx.clip();
+      
       ctx.strokeStyle = obvColor;
       ctx.lineWidth = 1;
       ctx.lineJoin = 'round';
@@ -989,7 +1029,7 @@ function drawOBVChart(
       let prevValidIndex = -1;
     for (let i = 0; i < obvValues.length; i++) {
       const time = new Date(data[i].timestamp).getTime() / 1000;
-      if (time >= minTime && time <= maxTime) {
+      // 모든 데이터 포인트를 그림 (앞뒤 추가 포인트 포함)
         const x = getX(time);
         const y = getY(obvValues[i], minMax.min, minMax.max);
         const volume = data[i].volume || 0;
@@ -1070,11 +1110,11 @@ function drawOBVChart(
           }
           prevValidIndex = i;
         }
-      }
     }
       
       ctx.stroke();
       ctx.setLineDash([]);
+      ctx.restore(); // 클리핑 해제
     }
     colorIndex++;
   });
@@ -1478,12 +1518,12 @@ let showCandles = false;
 let showGaps = true;
 let showVolume = false;
 let showOBV = false;
-let showSmooth = false;
+let smoothMode: 'none' | 'smooth' | 'open' = 'none';  // 곱선 모드: 직선, 부드럽게, 시가반영
 let showAverage = false;
 let hideValues = false;
 let dailyGroup = false;
 let hideLines = false;
-let hideGrid = false;
+let showGrid = false;  // 기본값 false (그리드 숨김)
 let showPoints = false;
 let enabledTickers = new Set<string>();  // 상단 체크박스 - 데이터 필터링
 let visibleTickers = new Set<string>();  // 범례 클릭 - 그래프 표시/숨김
@@ -1496,6 +1536,16 @@ let rangeMax = 100; // X축 0-100%
 let legendItems: { symbol: string; x: number; y: number; width: number; height: number }[] = [];
 let dataPoints: { symbol: string; x: number; y: number; value: number; time: number; chartType: string }[] = [];
 let hoveredPoint: { symbol: string; x: number; y: number; value: number; time: number; chartType: string } | null = null;
+
+// 줌/패닝 관련 변수
+let zoomStart = 0;    // 줌 시작 위치 (0-100%)
+let zoomEnd = 100;    // 줌 끝 위치 (0-100%)
+let isDragging = false;
+let dragStartX: number | null = null;
+let dragCurrentX: number | null = null;
+let isPanning = false;
+let panStartX: number | null = null;
+let zoomButtons: { type: string; x: number; y: number; width: number; height: number }[] = [];
 
 function renderWithCrosshair() {
   if (!currentData || !canvas) return;
@@ -1566,19 +1616,74 @@ function renderWithCrosshair() {
     filteredDataMap = groupDataByDay(filteredDataMap);
   }
   
-  // X축 범위 필터링 적용
+  // X축 범위 필터링 적용 (rangeSlider와 zoom 모두 적용)
+  // 시간 기반으로 필터링 (티커별로 타임스탬프가 다를 수 있으므로)
+  
+  // 먼저 전체 시간 범위 계산
+  let globalMinTime = Infinity;
+  let globalMaxTime = -Infinity;
+  filteredDataMap.forEach((data) => {
+    data.forEach(d => {
+      const time = new Date(d.timestamp).getTime() / 1000;
+      if (time < globalMinTime) globalMinTime = time;
+      if (time > globalMaxTime) globalMaxTime = time;
+    });
+  });
+  const globalTimeRange = globalMaxTime - globalMinTime || 1;
+  
+  // rangeSlider로 시간 범위 계산
+  let targetMinTime = globalMinTime;
+  let targetMaxTime = globalMaxTime;
+  
   if (rangeMin > 0 || rangeMax < 100) {
-    const rangeFilteredMap = new Map<string, ChartData[]>();
+    targetMinTime = globalMinTime + globalTimeRange * rangeMin / 100;
+    targetMaxTime = globalMinTime + globalTimeRange * rangeMax / 100;
+  }
+  
+  // zoom 범위 적용 (range 범위 내에서)
+  if (zoomStart > 0 || zoomEnd < 100) {
+    const rangeTimeSpan = targetMaxTime - targetMinTime;
+    const zoomMinTime = targetMinTime + rangeTimeSpan * zoomStart / 100;
+    const zoomMaxTime = targetMinTime + rangeTimeSpan * zoomEnd / 100;
+    targetMinTime = zoomMinTime;
+    targetMaxTime = zoomMaxTime;
+  }
+  
+  // 시간 기반으로 각 티커 필터링 (앞뒤 1개씩 더 포함)
+  let baseFilteredMap = filteredDataMap;
+  if (rangeMin > 0 || rangeMax < 100 || zoomStart > 0 || zoomEnd < 100) {
+    const timeFilteredMap = new Map<string, ChartData[]>();
     filteredDataMap.forEach((data, symbol) => {
       if (data.length === 0) {
-        rangeFilteredMap.set(symbol, []);
+        timeFilteredMap.set(symbol, []);
         return;
       }
-      const startIdx = Math.floor((data.length - 1) * rangeMin / 100);
-      const endIdx = Math.ceil((data.length - 1) * rangeMax / 100);
-      rangeFilteredMap.set(symbol, data.slice(startIdx, endIdx + 1));
+      
+      // 시간 범위에 해당하는 인덱스 찾기
+      let startIdx = -1;
+      let endIdx = -1;
+      for (let i = 0; i < data.length; i++) {
+        const time = new Date(data[i].timestamp).getTime() / 1000;
+        if (time >= targetMinTime && startIdx === -1) {
+          startIdx = i;
+        }
+        if (time <= targetMaxTime) {
+          endIdx = i;
+        }
+      }
+      
+      if (startIdx === -1 || endIdx === -1) {
+        // 범위에 데이터가 없으면 빈 배열
+        timeFilteredMap.set(symbol, []);
+        return;
+      }
+      
+      // 앞뒤로 1개씩 더 포함
+      const actualStartIdx = Math.max(0, startIdx - 1);
+      const actualEndIdx = Math.min(data.length - 1, endIdx + 1);
+      timeFilteredMap.set(symbol, data.slice(actualStartIdx, actualEndIdx + 1));
     });
-    filteredDataMap = rangeFilteredMap;
+    filteredDataMap = timeFilteredMap;
   }
   
   // 시간 포인트 수집
@@ -1592,17 +1697,21 @@ function renderWithCrosshair() {
   const sortedTimes = Array.from(allTimePoints).sort((a, b) => a - b);
   currentSortedTimes = sortedTimes; // 전역 변수에 저장
   
+  // 화면에 표시할 시간 범위 (앞뒤 추가 포인트 제외)
+  const displayMinTime = targetMinTime;
+  const displayMaxTime = targetMaxTime;
+  
   // Price 차트 그리기
-  drawSimpleOverlayChart(ctx, width, totalHeight, filteredDataMap, currentData.events, showEvents, showCandles, showGaps, showVolume || showOBV, priceChartHeight, showSmooth, showAverage, hideValues, hideLines);
+  drawSimpleOverlayChart(ctx, width, totalHeight, filteredDataMap, currentData.events, showEvents, showCandles, showGaps, showVolume || showOBV, priceChartHeight, smoothMode, showAverage, hideValues, hideLines, displayMinTime, displayMaxTime);
   
   // Volume 렌더링
   if (showVolume) {
-    drawVolumeChart(ctx, width, totalHeight, volumeTopY, volumeTopY, volumeChartHeight, filteredDataMap, sortedTimes, showGaps, showSmooth, showAverage, hideValues, hideLines);
+    drawVolumeChart(ctx, width, totalHeight, volumeTopY, volumeTopY, volumeChartHeight, filteredDataMap, sortedTimes, showGaps, smoothMode !== 'none', showAverage, hideValues, hideLines, displayMinTime, displayMaxTime);
   }
   
   // OBV 렌더링
   if (showOBV) {
-    drawOBVChart(ctx, width, totalHeight, obvTopY, obvTopY, obvChartHeight, filteredDataMap, sortedTimes, showGaps, showSmooth, showAverage, hideValues, hideLines);
+    drawOBVChart(ctx, width, totalHeight, obvTopY, obvTopY, obvChartHeight, filteredDataMap, sortedTimes, showGaps, smoothMode !== 'none', showAverage, hideValues, hideLines, displayMinTime, displayMaxTime);
   }
 
   // 차트 간 구분선 그리기
@@ -1640,7 +1749,7 @@ function renderWithCrosshair() {
   // 포인트 그리기 (showPoints가 켜져있을 때)
   if (showPoints) {
     dataPoints = []; // 초기화
-    drawDataPoints(ctx, width, filteredDataMap, sortedTimes, priceChartHeight, volumeTopY, volumeChartHeight, obvTopY, obvChartHeight, showVolume, showOBV);
+    drawDataPoints(ctx, width, filteredDataMap, sortedTimes, priceChartHeight, volumeTopY, volumeChartHeight, obvTopY, obvChartHeight, showVolume, showOBV, displayMinTime, displayMaxTime);
   } else {
     dataPoints = [];
   }
@@ -1650,9 +1759,82 @@ function renderWithCrosshair() {
     drawPointTooltip(ctx, hoveredPoint);
   }
 
-  // 크로스헤어 그리기 (전체 영역)
-  if (mouseX !== null && mouseY !== null) {
+  // 줌 버튼 그리기 (우측 상단)
+  drawZoomButtons(ctx, width);
+
+  // 드래그 선택 영역 그리기
+  if (isDragging && dragStartX !== null && dragCurrentX !== null) {
+    const selectionLeft = Math.min(dragStartX, dragCurrentX);
+    const selectionWidth = Math.abs(dragCurrentX - dragStartX);
+    
+    // 차트 영역의 실제 하단 계산
+    let chartBottom = priceChartHeight;
+    if (showVolume && volumeChartHeight > 0) {
+      chartBottom = volumeTopY + volumeChartHeight;
+    }
+    if (showOBV && obvChartHeight > 0) {
+      chartBottom = obvTopY + obvChartHeight;
+    }
+    
+    ctx.fillStyle = 'rgba(74, 144, 217, 0.2)';
+    ctx.fillRect(selectionLeft, padding, selectionWidth, chartBottom - padding);
+    
+    ctx.strokeStyle = '#4a90d9';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(selectionLeft, padding, selectionWidth, chartBottom - padding);
+    ctx.setLineDash([]);
+  }
+
+  // 크로스헤어 그리기 (전체 영역) - 드래그 중이 아닐 때만
+  if (mouseX !== null && mouseY !== null && !isDragging && !isPanning) {
     drawCrosshair(ctx, width, totalHeight, mouseX, mouseY, priceChartHeight, volumeTopY, volumeChartHeight, obvTopY, obvChartHeight, showVolume, showOBV);
+  }
+}
+
+function drawZoomButtons(ctx: CanvasRenderingContext2D, width: number) {
+  const buttonSize = 24;
+  const buttonGap = 6;
+  const startX = width - padding - (buttonSize * 3 + buttonGap * 2);
+  const startY = padding + 5;
+  
+  zoomButtons = [];
+  
+  const buttons = [
+    { type: 'zoomIn', label: '+' },
+    { type: 'zoomOut', label: '−' },
+    { type: 'reset', label: '↺' }
+  ];
+  
+  buttons.forEach((btn, i) => {
+    const x = startX + i * (buttonSize + buttonGap);
+    const y = startY;
+    
+    // 버튼 배경
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.strokeStyle = '#999';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x, y, buttonSize, buttonSize, 4);
+    ctx.fill();
+    ctx.stroke();
+    
+    // 버튼 텍스트
+    ctx.fillStyle = '#333';
+    ctx.font = 'bold 16px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(btn.label, x + buttonSize / 2, y + buttonSize / 2);
+    
+    zoomButtons.push({ type: btn.type, x, y, width: buttonSize, height: buttonSize });
+  });
+  
+  // 현재 줌 상태 표시 (확대 중일 때만)
+  if (zoomStart > 0 || zoomEnd < 100) {
+    ctx.font = '10px Arial';
+    ctx.fillStyle = '#666';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${zoomStart.toFixed(0)}%-${zoomEnd.toFixed(0)}%`, startX, startY + buttonSize + 12);
   }
 }
 
@@ -1667,12 +1849,15 @@ function drawDataPoints(
   obvTopY: number,
   obvHeight: number,
   hasVolume: boolean,
-  hasOBV: boolean
+  hasOBV: boolean,
+  displayMinTime?: number,
+  displayMaxTime?: number
 ) {
   if (sortedTimes.length === 0) return;
 
-  const minTime = sortedTimes[0];
-  const maxTime = sortedTimes[sortedTimes.length - 1];
+  // displayMinTime/displayMaxTime이 전달되면 해당 범위로 X축 고정
+  const minTime = displayMinTime ?? sortedTimes[0];
+  const maxTime = displayMaxTime ?? sortedTimes[sortedTimes.length - 1];
   const timeRange = maxTime - minTime || 1;
 
   const getX = (time: number): number => {
@@ -1708,7 +1893,9 @@ function drawDataPoints(
   });
 
   let colorIndex = 0;
-  const pointRadius = 3;
+  const pointRadius = 2;
+  const clipLeft = padding;
+  const clipRight = width - padding;
 
   dataMap.forEach((data, symbol) => {
     if (!visibleTickers.has(symbol)) {
@@ -1729,6 +1916,9 @@ function drawDataPoints(
         if (time < minTime || time > maxTime) return;
 
         const x = getX(time);
+        // 클리핑 영역 체크
+        if (x < clipLeft || x > clipRight) return;
+        
         const normalizedValue = (d.close - priceMinMax.min) / (priceMinMax.max - priceMinMax.min || 1);
         const y = graphTop + (1 - normalizedValue) * graphHeight;
 
@@ -1750,6 +1940,9 @@ function drawDataPoints(
         if (time < minTime || time > maxTime) return;
 
         const x = getX(time);
+        // 클리핑 영역 체크
+        if (x < clipLeft || x > clipRight) return;
+        
         const normalizedValue = (volume - volumeMinMax.min) / (volumeMinMax.max - volumeMinMax.min || 1);
         const y = volumeTopY + (1 - normalizedValue) * volumeHeight;
 
@@ -1771,6 +1964,9 @@ function drawDataPoints(
         if (time < minTime || time > maxTime) return;
 
         const x = getX(time);
+        // 클리핑 영역 체크
+        if (x < clipLeft || x > clipRight) return;
+        
         const normalizedValue = (obvValues[i] - obvData.min) / (obvData.max - obvData.min || 1);
         const y = obvTopY + (1 - normalizedValue) * obvHeight;
 
@@ -2063,11 +2259,18 @@ function render() {
     });
   }
 
-  if (toggleSmoothEl) {
-    toggleSmoothEl.checked = showSmooth;
-    toggleSmoothEl.addEventListener('change', () => {
-      showSmooth = toggleSmoothEl.checked;
-      render();
+  // 곡선 모드 라디오 버튼
+  if (smoothModeRadios.length > 0) {
+    smoothModeRadios.forEach(radio => {
+      if (radio.value === smoothMode) {
+        radio.checked = true;
+      }
+      radio.addEventListener('change', () => {
+        if (radio.checked) {
+          smoothMode = radio.value as 'none' | 'smooth' | 'open';
+          render();
+        }
+      });
     });
   }
 
@@ -2103,10 +2306,10 @@ function render() {
     });
   }
 
-  if (toggleHideGridEl) {
-    toggleHideGridEl.checked = hideGrid;
-    toggleHideGridEl.addEventListener('change', () => {
-      hideGrid = toggleHideGridEl.checked;
+  if (toggleShowGridEl) {
+    toggleShowGridEl.checked = showGrid;
+    toggleShowGridEl.addEventListener('change', () => {
+      showGrid = toggleShowGridEl.checked;
       render();
     });
   }
@@ -2162,15 +2365,91 @@ function render() {
   render();
   window.addEventListener('resize', render);
 
+  // 그래프 영역인지 확인하는 함수
+  function isInChartArea(x: number, y: number): boolean {
+    return x >= padding && x <= canvasWidth - padding && y >= padding;
+  }
+
+  // 줌 인 함수
+  function zoomIn() {
+    const range = zoomEnd - zoomStart;
+    if (range <= 10) return; // 최소 10% 범위
+    const center = (zoomStart + zoomEnd) / 2;
+    const newRange = range * 0.7;
+    zoomStart = Math.max(0, center - newRange / 2);
+    zoomEnd = Math.min(100, center + newRange / 2);
+    render();
+  }
+
+  // 줌 아웃 함수
+  function zoomOut() {
+    const range = zoomEnd - zoomStart;
+    if (range >= 100) return;
+    const center = (zoomStart + zoomEnd) / 2;
+    const newRange = Math.min(100, range * 1.4);
+    zoomStart = Math.max(0, center - newRange / 2);
+    zoomEnd = Math.min(100, center + newRange / 2);
+    // 경계 조정
+    if (zoomStart < 0) {
+      zoomEnd -= zoomStart;
+      zoomStart = 0;
+    }
+    if (zoomEnd > 100) {
+      zoomStart -= (zoomEnd - 100);
+      zoomEnd = 100;
+    }
+    render();
+  }
+
+  // 줌 리셋 함수
+  function zoomReset() {
+    zoomStart = 0;
+    zoomEnd = 100;
+    render();
+  }
+
   // 마우스 인터렉션
   canvas.addEventListener('mousemove', (e: MouseEvent) => {
     const rect = canvas.getBoundingClientRect();
     mouseX = e.clientX - rect.left;
     mouseY = e.clientY - rect.top;
     
+    // 드래그 선택 중
+    if (isDragging && dragStartX !== null) {
+      dragCurrentX = Math.max(padding, Math.min(canvasWidth - padding, mouseX));
+      render();
+      return;
+    }
+    
+    // 패닝 중
+    if (isPanning && panStartX !== null) {
+      const dx = mouseX - panStartX;
+      const pixelRange = canvasWidth - padding * 2;
+      const percentDelta = (dx / pixelRange) * (zoomEnd - zoomStart);
+      
+      let newStart = zoomStart - percentDelta;
+      let newEnd = zoomEnd - percentDelta;
+      
+      // 경계 체크
+      if (newStart < 0) {
+        newEnd -= newStart;
+        newStart = 0;
+      }
+      if (newEnd > 100) {
+        newStart -= (newEnd - 100);
+        newEnd = 100;
+      }
+      
+      zoomStart = Math.max(0, newStart);
+      zoomEnd = Math.min(100, newEnd);
+      panStartX = mouseX;
+      render();
+      return;
+    }
+    
     // 포인트 호버 감지
     if (showPoints && dataPoints.length > 0) {
-      const hoverRadius = 8; // 호버 감지 반경
+      const hoverRadius = 6; // 호버 감지 반경
       let foundPoint = null;
       for (const point of dataPoints) {
         const dx = mouseX - point.x;
@@ -2183,6 +2462,33 @@ function render() {
       hoveredPoint = foundPoint;
     }
     
+    // 커서 변경
+    let cursor = 'crosshair';
+    
+    // 줌 버튼 위
+    for (const btn of zoomButtons) {
+      if (mouseX >= btn.x && mouseX <= btn.x + btn.width &&
+          mouseY >= btn.y && mouseY <= btn.y + btn.height) {
+        cursor = 'pointer';
+        break;
+      }
+    }
+    
+    // 범례 위
+    for (const item of legendItems) {
+      if (mouseX >= item.x && mouseX <= item.x + item.width &&
+          mouseY >= item.y && mouseY <= item.y + item.height) {
+        cursor = 'pointer';
+        break;
+      }
+    }
+    
+    // 확대 중이면서 차트 영역이면 grab 커서
+    if ((zoomStart > 0 || zoomEnd < 100) && isInChartArea(mouseX, mouseY) && cursor === 'crosshair') {
+      cursor = 'grab';
+    }
+    
+    canvas.style.cursor = cursor;
     render();
   });
 
@@ -2190,19 +2496,115 @@ function render() {
     mouseX = null;
     mouseY = null;
     hoveredPoint = null;
+    isDragging = false;
+    dragStartX = null;
+    dragCurrentX = null;
+    isPanning = false;
+    panStartX = null;
     render();
   });
 
-  // 범례 클릭으로 티커 표시/숨김 토글 (데이터 필터링 X, 그래프만 숨김)
-  // 포인트 클릭 시 툴팁 표시 (모바일 터치 지원)
+  // 마우스 다운 - 드래그 시작
+  canvas.addEventListener('mousedown', (e: MouseEvent) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // 줌 버튼 클릭 확인
+    for (const btn of zoomButtons) {
+      if (x >= btn.x && x <= btn.x + btn.width &&
+          y >= btn.y && y <= btn.y + btn.height) {
+        return; // 버튼 클릭은 click 이벤트에서 처리
+      }
+    }
+    
+    // 범례 클릭 확인
+    for (const item of legendItems) {
+      if (x >= item.x && x <= item.x + item.width &&
+          y >= item.y && y <= item.y + item.height) {
+        return; // 범례 클릭은 click 이벤트에서 처리
+      }
+    }
+    
+    // 차트 영역에서 드래그 시작
+    if (isInChartArea(x, y)) {
+      // 확대 중이면 패닝
+      if (zoomStart > 0 || zoomEnd < 100) {
+        isPanning = true;
+        panStartX = x;
+        canvas.style.cursor = 'grabbing';
+      } else {
+        // 확대 안된 상태면 드래그 선택
+        isDragging = true;
+        dragStartX = x;
+        dragCurrentX = x;
+      }
+    }
+  });
+
+  // 마우스 업 - 드래그 종료
+  canvas.addEventListener('mouseup', (e: MouseEvent) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    
+    // 드래그 선택 종료 → 줌 적용
+    if (isDragging && dragStartX !== null && dragCurrentX !== null) {
+      const startX = Math.min(dragStartX, dragCurrentX);
+      const endX = Math.max(dragStartX, dragCurrentX);
+      const selectionWidth = endX - startX;
+      
+      // 최소 드래그 거리 (10px 이상일 때만 줌)
+      if (selectionWidth > 10) {
+        const chartWidth = canvasWidth - padding * 2;
+        const startPercent = ((startX - padding) / chartWidth) * 100;
+        const endPercent = ((endX - padding) / chartWidth) * 100;
+        
+        // 현재 줌 범위 내에서의 상대적 위치로 변환
+        const currentRange = zoomEnd - zoomStart;
+        zoomStart = zoomStart + (startPercent / 100) * currentRange;
+        zoomEnd = zoomStart + ((endPercent - startPercent) / 100) * currentRange;
+        
+        // 경계 체크
+        zoomStart = Math.max(0, zoomStart);
+        zoomEnd = Math.min(100, zoomEnd);
+      }
+      
+      isDragging = false;
+      dragStartX = null;
+      dragCurrentX = null;
+      render();
+      return;
+    }
+    
+    // 패닝 종료
+    if (isPanning) {
+      isPanning = false;
+      panStartX = null;
+      canvas.style.cursor = 'grab';
+      render();
+    }
+  });
+
+  // 클릭 이벤트 - 줌 버튼, 범례, 포인트
   canvas.addEventListener('click', (e: MouseEvent) => {
     const rect = canvas.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
     
+    // 줌 버튼 클릭 확인
+    for (const btn of zoomButtons) {
+      if (clickX >= btn.x && clickX <= btn.x + btn.width &&
+          clickY >= btn.y && clickY <= btn.y + btn.height) {
+        if (btn.type === 'zoomIn') zoomIn();
+        else if (btn.type === 'zoomOut') zoomOut();
+        else if (btn.type === 'reset') zoomReset();
+        return;
+      }
+    }
+    
     // 포인트 클릭 감지 (모바일 터치)
     if (showPoints && dataPoints.length > 0) {
-      const clickRadius = 15; // 클릭 감지 반경 (터치 친화적)
+      const clickRadius = 12; // 클릭 감지 반경 (터치 친화적)
       for (const point of dataPoints) {
         const dx = clickX - point.x;
         const dy = clickY - point.y;
@@ -2231,21 +2633,245 @@ function render() {
     }
   });
 
-  // 범례 위에 마우스 올리면 커서 변경
-  canvas.addEventListener('mousemove', (e: MouseEvent) => {
+  // 휠로 줌
+  canvas.addEventListener('wheel', (e: WheelEvent) => {
     const rect = canvas.getBoundingClientRect();
-    const hoverX = e.clientX - rect.left;
-    const hoverY = e.clientY - rect.top;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
     
-    let isOverLegend = false;
-    for (const item of legendItems) {
-      if (hoverX >= item.x && hoverX <= item.x + item.width &&
-          hoverY >= item.y && hoverY <= item.y + item.height) {
-        isOverLegend = true;
-        break;
+    if (isInChartArea(x, y)) {
+      e.preventDefault();
+      if (e.deltaY < 0) {
+        zoomIn();
+      } else {
+        zoomOut();
       }
     }
+  }, { passive: false });
+
+  // ===== 모바일 터치 이벤트 =====
+  let touchStartX: number | null = null;
+  let touchStartY: number | null = null;
+  let lastPinchDistance: number | null = null;
+  let isTouchDragging = false;
+  let isTouchPanning = false;
+
+  // 두 터치 포인트 사이의 거리 계산
+  function getPinchDistance(touches: TouchList): number {
+    if (touches.length < 2) return 0;
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  // 터치 시작
+  canvas.addEventListener('touchstart', (e: TouchEvent) => {
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches[0];
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
+
+    // 두 손가락 터치 = 핀치 줌 준비
+    if (e.touches.length === 2) {
+      lastPinchDistance = getPinchDistance(e.touches);
+      isTouchDragging = false;
+      isTouchPanning = false;
+      return;
+    }
+
+    // 줌 버튼 터치 확인
+    for (const btn of zoomButtons) {
+      if (x >= btn.x && x <= btn.x + btn.width &&
+          y >= btn.y && y <= btn.y + btn.height) {
+        // 버튼 터치는 touchend에서 처리
+        return;
+      }
+    }
+
+    // 차트 영역 터치
+    if (isInChartArea(x, y)) {
+      touchStartX = x;
+      touchStartY = y;
+      
+      // 확대 중이면 패닝, 아니면 드래그 선택
+      if (zoomStart > 0 || zoomEnd < 100) {
+        isTouchPanning = true;
+        panStartX = x;
+      } else {
+        isTouchDragging = true;
+        dragStartX = x;
+        dragCurrentX = x;
+      }
+    }
+  }, { passive: true });
+
+  // 터치 이동
+  canvas.addEventListener('touchmove', (e: TouchEvent) => {
+    const rect = canvas.getBoundingClientRect();
+
+    // 핀치 줌
+    if (e.touches.length === 2 && lastPinchDistance !== null) {
+      e.preventDefault();
+      const newDistance = getPinchDistance(e.touches);
+      const delta = newDistance - lastPinchDistance;
+      
+      if (Math.abs(delta) > 10) { // 최소 변화량
+        if (delta > 0) {
+          zoomIn();
+        } else {
+          zoomOut();
+        }
+        lastPinchDistance = newDistance;
+      }
+      return;
+    }
+
+    if (e.touches.length !== 1) return;
     
-    canvas.style.cursor = isOverLegend ? 'pointer' : 'crosshair';
-  });
+    const touch = e.touches[0];
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
+
+    // 드래그 선택 중
+    if (isTouchDragging && dragStartX !== null) {
+      e.preventDefault();
+      dragCurrentX = Math.max(padding, Math.min(canvasWidth - padding, x));
+      isDragging = true; // 렌더링용
+      render();
+      return;
+    }
+
+    // 패닝 중
+    if (isTouchPanning && panStartX !== null) {
+      e.preventDefault();
+      const dx = x - panStartX;
+      const pixelRange = canvasWidth - padding * 2;
+      const percentDelta = (dx / pixelRange) * (zoomEnd - zoomStart);
+      
+      let newStart = zoomStart - percentDelta;
+      let newEnd = zoomEnd - percentDelta;
+      
+      // 경계 체크
+      if (newStart < 0) {
+        newEnd -= newStart;
+        newStart = 0;
+      }
+      if (newEnd > 100) {
+        newStart -= (newEnd - 100);
+        newEnd = 100;
+      }
+      
+      zoomStart = Math.max(0, newStart);
+      zoomEnd = Math.min(100, newEnd);
+      panStartX = x;
+      render();
+      return;
+    }
+  }, { passive: false });
+
+  // 터치 종료
+  canvas.addEventListener('touchend', (e: TouchEvent) => {
+    const rect = canvas.getBoundingClientRect();
+
+    // 핀치 줌 종료
+    if (lastPinchDistance !== null) {
+      lastPinchDistance = null;
+      return;
+    }
+
+    // 드래그 선택 종료 → 줌 적용
+    if (isTouchDragging && dragStartX !== null && dragCurrentX !== null) {
+      const startX = Math.min(dragStartX, dragCurrentX);
+      const endX = Math.max(dragStartX, dragCurrentX);
+      const selectionWidth = endX - startX;
+      
+      // 최소 드래그 거리 (20px 이상일 때만 줌 - 터치는 좀 더 여유있게)
+      if (selectionWidth > 20) {
+        const chartWidth = canvasWidth - padding * 2;
+        const startPercent = ((startX - padding) / chartWidth) * 100;
+        const endPercent = ((endX - padding) / chartWidth) * 100;
+        
+        // 현재 줌 범위 내에서의 상대적 위치로 변환
+        const currentRange = zoomEnd - zoomStart;
+        zoomStart = zoomStart + (startPercent / 100) * currentRange;
+        zoomEnd = zoomStart + ((endPercent - startPercent) / 100) * currentRange;
+        
+        // 경계 체크
+        zoomStart = Math.max(0, zoomStart);
+        zoomEnd = Math.min(100, zoomEnd);
+      } else if (selectionWidth < 10 && touchStartX !== null && touchStartY !== null) {
+        // 짧은 터치 = 탭으로 처리 (줌 버튼, 범례, 포인트 클릭)
+        const tapX = touchStartX;
+        const tapY = touchStartY;
+        
+        // 줌 버튼 탭 확인
+        for (const btn of zoomButtons) {
+          if (tapX >= btn.x && tapX <= btn.x + btn.width &&
+              tapY >= btn.y && tapY <= btn.y + btn.height) {
+            if (btn.type === 'zoomIn') zoomIn();
+            else if (btn.type === 'zoomOut') zoomOut();
+            else if (btn.type === 'reset') zoomReset();
+            break;
+          }
+        }
+        
+        // 포인트 탭 확인
+        if (showPoints && dataPoints.length > 0) {
+          const tapRadius = 20; // 터치 친화적 반경
+          for (const point of dataPoints) {
+            const dx = tapX - point.x;
+            const dy = tapY - point.y;
+            if (Math.sqrt(dx * dx + dy * dy) <= tapRadius) {
+              hoveredPoint = hoveredPoint === point ? null : point;
+              break;
+            }
+          }
+        }
+        
+        // 범례 탭 확인
+        for (const item of legendItems) {
+          if (tapX >= item.x && tapX <= item.x + item.width &&
+              tapY >= item.y && tapY <= item.y + item.height) {
+            if (visibleTickers.has(item.symbol)) {
+              visibleTickers.delete(item.symbol);
+            } else {
+              visibleTickers.add(item.symbol);
+            }
+            break;
+          }
+        }
+      }
+      
+      isTouchDragging = false;
+      isDragging = false;
+      dragStartX = null;
+      dragCurrentX = null;
+      render();
+      return;
+    }
+
+    // 패닝 종료
+    if (isTouchPanning) {
+      isTouchPanning = false;
+      panStartX = null;
+      render();
+    }
+
+    touchStartX = null;
+    touchStartY = null;
+  }, { passive: true });
+
+  // 터치 취소
+  canvas.addEventListener('touchcancel', () => {
+    isTouchDragging = false;
+    isTouchPanning = false;
+    isDragging = false;
+    dragStartX = null;
+    dragCurrentX = null;
+    panStartX = null;
+    touchStartX = null;
+    touchStartY = null;
+    lastPinchDistance = null;
+    render();
+  }, { passive: true });
 })();
