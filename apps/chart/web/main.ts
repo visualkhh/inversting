@@ -137,7 +137,7 @@ function drawSimpleOverlayChart(
   fillGaps = false,
   showOBV = false,
   priceChartHeight?: number,
-  smoothMode: 'none' | 'smooth' | 'open' | 'high' | 'low' = 'none',
+  smoothMode: 'none' | 'smooth' | 'open' | 'high' | 'low' | 'middle' = 'none',
   showAverage = false,
   hideValues = false,
   hideLines = false,
@@ -405,6 +405,8 @@ function drawSimpleOverlayChart(
             cp2y = getY(point.high, minMax.min, minMax.max);
           } else if (smoothMode === 'low' && point.low && point.low > 0) {
             cp2y = getY(point.low, minMax.min, minMax.max);
+          } else if (smoothMode === 'middle' && point.high && point.low) {
+            cp2y = getY((point.high + point.low) / 2, minMax.min, minMax.max);
           } else {
             cp2y = y;
           }
@@ -435,6 +437,8 @@ function drawSimpleOverlayChart(
             cp2y = getY(point.high, minMax.min, minMax.max);
           } else if (smoothMode === 'low' && point.low && point.low > 0) {
             cp2y = getY(point.low, minMax.min, minMax.max);
+          } else if (smoothMode === 'middle' && point.high && point.low) {
+            cp2y = getY((point.high + point.low) / 2, minMax.min, minMax.max);
           } else {
             cp2y = y;
           }
@@ -905,6 +909,7 @@ function drawVolumeChart(
       });
       
       if (yValues.length > 0) {
+        // Y 좌표의 평균
         const avgY = yValues.reduce((sum, y) => sum + y, 0) / yValues.length;
         avgPoints.push({ time, avgY });
       }
@@ -1635,7 +1640,7 @@ let showCandles = false;
 let showGaps = true;
 let showVolume = false;
 let showOBV = false;
-let smoothMode: 'none' | 'smooth' | 'open' | 'high' | 'low' = 'none';  // 곱선 모드: 직선, 부드럽게, 시작가반영, 최고가, 최저가
+let smoothMode: 'none' | 'smooth' | 'open' | 'high' | 'low' | 'middle' = 'none';  // 곡선 모드: 직선, 부드럽게, 시작가, 최고가, 최저가, 중간가
 let showAverage = false;
 let hideValues = false;
 let dailyGroup = false;
@@ -2401,7 +2406,7 @@ function render() {
       }
       radio.addEventListener('change', () => {
         if (radio.checked) {
-          smoothMode = radio.value as 'none' | 'smooth' | 'open' | 'high' | 'low';
+          smoothMode = radio.value as 'none' | 'smooth' | 'open' | 'high' | 'low' | 'middle';
           render();
         }
       });
@@ -2737,9 +2742,15 @@ function render() {
         zoomStart = zoomStart + (startPercent / 100) * currentRange;
         zoomEnd = zoomStart + ((endPercent - startPercent) / 100) * currentRange;
         
-        // 경계 체크
-        zoomStart = Math.max(0, zoomStart);
-        zoomEnd = Math.min(100, zoomEnd);
+        // 경계 조정
+        if (zoomStart < 0) {
+          zoomEnd -= zoomStart;
+          zoomStart = 0;
+        }
+        if (zoomEnd > 100) {
+          zoomStart -= (zoomEnd - 100);
+          zoomEnd = 100;
+        }
       }
       
       isDragging = false;
@@ -2972,7 +2983,7 @@ function render() {
         zoomStart = zoomStart + (startPercent / 100) * currentRange;
         zoomEnd = zoomStart + ((endPercent - startPercent) / 100) * currentRange;
         
-        // 경계 체크
+        // 경계 조정
         zoomStart = Math.max(0, zoomStart);
         zoomEnd = Math.min(100, zoomEnd);
       } else if (selectionWidth < 10 && touchStartX !== null && touchStartY !== null) {
