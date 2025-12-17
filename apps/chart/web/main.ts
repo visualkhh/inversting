@@ -27,6 +27,10 @@ const toggleAverageEl = document.getElementById('toggle-average') as HTMLInputEl
 const toggleHideValuesEl = document.getElementById('toggle-hide-values') as HTMLInputElement | null;
 const toggleDailyGroupEl = document.getElementById('toggle-daily-group') as HTMLInputElement | null;
 const toggleHideLinesEl = document.getElementById('toggle-hide-lines') as HTMLInputElement | null;
+const rangeMinEl = document.getElementById('range-min') as HTMLInputElement | null;
+const rangeMaxEl = document.getElementById('range-max') as HTMLInputElement | null;
+const rangeSliderRangeEl = document.getElementById('range-slider-range') as HTMLElement | null;
+const rangeValuesEl = document.getElementById('range-values') as HTMLElement | null;
 const canvas = document.getElementById('chart') as HTMLCanvasElement | null;
 
 if (!canvas) {
@@ -181,6 +185,7 @@ function drawSimpleOverlayChart(
   const graphBottom = actualHeight;
   const graphHeight = graphBottom - graphTop;
 
+  // Y축 범위 적용: 정규화된 값(0-1)에서 yRangeMin~yRangeMax 범위만 표시
   const getY = (value: number, minVal: number, maxVal: number): number => {
     const range = maxVal - minVal || 1;
     const normalizedValue = (value - minVal) / range;
@@ -252,7 +257,7 @@ function drawSimpleOverlayChart(
   ctx.save();
   // Price 영역의 실제 중간 위치 계산
   const priceLabelY = (graphTop + graphBottom) / 2;
-  ctx.translate(15, priceLabelY);
+  ctx.translate(8, priceLabelY);
   ctx.rotate(-Math.PI / 2);
   ctx.fillStyle = '#000000';
   ctx.font = 'bold 14px Arial';
@@ -715,7 +720,7 @@ function drawVolumeChart(
 
   // 'Volume' 세로 텍스트
   ctx.save();
-  ctx.translate(15, volumeTopY + volumeHeight / 2);
+  ctx.translate(8, volumeTopY + volumeHeight / 2);
   ctx.rotate(-Math.PI / 2);
   ctx.font = 'bold 14px Arial';
   ctx.textAlign = 'center';
@@ -1046,7 +1051,7 @@ function drawOBVChart(
   
   // 'OBV' 세로 텍스트
   ctx.save();
-  ctx.translate(15, obvTopY + obvHeight / 2);
+  ctx.translate(8, obvTopY + obvHeight / 2);
   ctx.rotate(-Math.PI / 2);
   ctx.font = 'bold 14px Arial';
   ctx.textAlign = 'center';
@@ -1439,6 +1444,8 @@ let mouseX: number | null = null;
 let mouseY: number | null = null;
 let canvasWidth = 0;
 let canvasHeight = 0;
+let rangeMin = 0;  // X축 0-100%
+let rangeMax = 100; // X축 0-100%
 
 function renderWithCrosshair() {
   if (!currentData || !canvas) return;
@@ -1507,6 +1514,21 @@ function renderWithCrosshair() {
   // 일자별 그룹 적용
   if (dailyGroup) {
     filteredDataMap = groupDataByDay(filteredDataMap);
+  }
+  
+  // X축 범위 필터링 적용
+  if (rangeMin > 0 || rangeMax < 100) {
+    const rangeFilteredMap = new Map<string, ChartData[]>();
+    filteredDataMap.forEach((data, symbol) => {
+      if (data.length === 0) {
+        rangeFilteredMap.set(symbol, []);
+        return;
+      }
+      const startIdx = Math.floor((data.length - 1) * rangeMin / 100);
+      const endIdx = Math.ceil((data.length - 1) * rangeMax / 100);
+      rangeFilteredMap.set(symbol, data.slice(startIdx, endIdx + 1));
+    });
+    filteredDataMap = rangeFilteredMap;
   }
   
   // 시간 포인트 수집
@@ -1613,9 +1635,11 @@ function drawCrosshair(
   // 값(%) 표시 (좌측) - 영역별로 구분
   let valueStr = '';
   
-  if (y >= padding && y <= priceHeight - padding) {
+  // Price 영역: padding ~ priceHeight (하단 padding 없음)
+  if (y >= padding && y <= priceHeight) {
     // Price 영역
-    const valuePercent = 100 - ((y - padding) / (priceHeight - padding * 2)) * 100;
+    const graphHeight = priceHeight - padding;
+    const valuePercent = 100 - ((y - padding) / graphHeight) * 100;
     valueStr = `${valuePercent.toFixed(1)}%`;
   } else if (hasVolume && volumeHeight > 0 && y >= volumeTopY && y <= volumeTopY + volumeHeight) {
     // Volume 영역
@@ -1789,6 +1813,43 @@ function render() {
       hideLines = toggleHideLinesEl.checked;
       render();
     });
+  }
+
+  // Range slider 이벤트 설정
+  function updateRangeSlider() {
+    if (rangeSliderRangeEl) {
+      rangeSliderRangeEl.style.left = `${rangeMin}%`;
+      rangeSliderRangeEl.style.width = `${rangeMax - rangeMin}%`;
+    }
+    if (rangeValuesEl) {
+      rangeValuesEl.textContent = `${rangeMin}% ~ ${rangeMax}%`;
+    }
+  }
+
+  if (rangeMinEl && rangeMaxEl) {
+    rangeMinEl.addEventListener('input', () => {
+      let val = parseInt(rangeMinEl.value, 10);
+      if (val > rangeMax - 1) {
+        val = rangeMax - 1;
+        rangeMinEl.value = String(val);
+      }
+      rangeMin = val;
+      updateRangeSlider();
+      render();
+    });
+
+    rangeMaxEl.addEventListener('input', () => {
+      let val = parseInt(rangeMaxEl.value, 10);
+      if (val < rangeMin + 1) {
+        val = rangeMin + 1;
+        rangeMaxEl.value = String(val);
+      }
+      rangeMax = val;
+      updateRangeSlider();
+      render();
+    });
+
+    updateRangeSlider();
   }
 
   render();

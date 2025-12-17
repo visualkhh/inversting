@@ -74,6 +74,84 @@
       font-weight: 600;
       white-space: nowrap;
     }
+    /* Range Slider */
+    #range-slider-container {
+      padding: 8px 12px;
+      border-bottom: 1px solid #e5e5e5;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+    }
+    #range-slider-container span {
+      font-weight: 600;
+      color: #222;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .range-slider-wrapper {
+      position: relative;
+      flex: 1;
+      min-width: 200px;
+      max-width: 600px;
+      height: 30px;
+    }
+    .range-slider-track {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 100%;
+      height: 6px;
+      background: #ddd;
+      border-radius: 3px;
+    }
+    .range-slider-range {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      height: 6px;
+      background: #4a90d9;
+      border-radius: 3px;
+    }
+    .range-slider-wrapper input[type="range"] {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 100%;
+      height: 6px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: transparent;
+      pointer-events: none;
+      margin: 0;
+    }
+    .range-slider-wrapper input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      background: #4a90d9;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      cursor: pointer;
+      pointer-events: auto;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    .range-slider-wrapper input[type="range"]::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      background: #4a90d9;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      cursor: pointer;
+      pointer-events: auto;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    #range-values {
+      font-size: 11px;
+      color: #666;
+      min-width: 180px;
+    }
     /* 모바일 대응 */
     @media (max-width: 768px) {
       #status {
@@ -141,6 +219,16 @@
         <input type="checkbox" id="toggle-all-tickers" checked /> 전체
       </label>
       <div id="ticker-list"></div>
+    </div>
+    <div id="range-slider-container">
+      <span>X축 범위:</span>
+      <div class="range-slider-wrapper">
+        <div class="range-slider-track"></div>
+        <div class="range-slider-range" id="range-slider-range"></div>
+        <input type="range" id="range-min" min="0" max="100" value="0" />
+        <input type="range" id="range-max" min="0" max="100" value="100" />
+      </div>
+      <span id="range-values">0% ~ 100%</span>
     </div>
     <div id="chart-container">
       <canvas id="chart"></canvas>
