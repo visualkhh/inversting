@@ -2504,25 +2504,64 @@ function render() {
     return x >= padding && x <= canvasWidth - padding && y >= padding;
   }
 
-  // 줌 인 함수
-  function zoomIn() {
+  // X 좌표를 줌 퍼센트로 변환
+  function xToZoomPercent(x: number): number {
+    const chartWidth = canvasWidth - padding * 2;
+    const xInChart = x - padding;
+    const percentInView = xInChart / chartWidth; // 0~1 (화면 내 비율)
+    return zoomStart + percentInView * (zoomEnd - zoomStart); // 전체 데이터 기준 퍼센트
+  }
+
+  // 줌 인 함수 (focusX: 줌 중심점의 X 좌표, 없으면 화면 중앙)
+  function zoomIn(focusX?: number) {
     const range = zoomEnd - zoomStart;
     if (range <= 10) return; // 최소 10% 범위
-    const center = (zoomStart + zoomEnd) / 2;
+    
+    // 중심점 계산
+    let focusPercent: number;
+    if (focusX !== undefined) {
+      focusPercent = xToZoomPercent(focusX);
+    } else {
+      focusPercent = (zoomStart + zoomEnd) / 2;
+    }
+    
     const newRange = range * 0.7;
-    zoomStart = Math.max(0, center - newRange / 2);
-    zoomEnd = Math.min(100, center + newRange / 2);
+    // focusPercent 위치가 줌 후에도 같은 화면 비율에 위치하도록
+    const focusRatio = (focusPercent - zoomStart) / range;
+    zoomStart = Math.max(0, focusPercent - newRange * focusRatio);
+    zoomEnd = Math.min(100, focusPercent + newRange * (1 - focusRatio));
+    
+    // 경계 조정
+    if (zoomStart < 0) {
+      zoomEnd -= zoomStart;
+      zoomStart = 0;
+    }
+    if (zoomEnd > 100) {
+      zoomStart -= (zoomEnd - 100);
+      zoomEnd = 100;
+    }
     render();
   }
 
-  // 줌 아웃 함수
-  function zoomOut() {
+  // 줌 아웃 함수 (focusX: 줌 중심점의 X 좌표, 없으면 화면 중앙)
+  function zoomOut(focusX?: number) {
     const range = zoomEnd - zoomStart;
     if (range >= 100) return;
-    const center = (zoomStart + zoomEnd) / 2;
+    
+    // 중심점 계산
+    let focusPercent: number;
+    if (focusX !== undefined) {
+      focusPercent = xToZoomPercent(focusX);
+    } else {
+      focusPercent = (zoomStart + zoomEnd) / 2;
+    }
+    
     const newRange = Math.min(100, range * 1.4);
-    zoomStart = Math.max(0, center - newRange / 2);
-    zoomEnd = Math.min(100, center + newRange / 2);
+    // focusPercent 위치가 줌 후에도 같은 화면 비율에 위치하도록
+    const focusRatio = (focusPercent - zoomStart) / range;
+    zoomStart = Math.max(0, focusPercent - newRange * focusRatio);
+    zoomEnd = Math.min(100, focusPercent + newRange * (1 - focusRatio));
+    
     // 경계 조정
     if (zoomStart < 0) {
       zoomEnd -= zoomStart;
@@ -2776,9 +2815,9 @@ function render() {
     if (isInChartArea(x, y)) {
       e.preventDefault();
       if (e.deltaY < 0) {
-        zoomIn();
+        zoomIn(x);  // 마우스 위치 기준 확대
       } else {
-        zoomOut();
+        zoomOut(x);  // 마우스 위치 기준 축소);
       }
     }
   }, { passive: false });
@@ -2849,11 +2888,14 @@ function render() {
       const newDistance = getPinchDistance(e.touches);
       const delta = newDistance - lastPinchDistance;
       
+      // 핀치 중심점 계산
+      const pinchCenterX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+      
       if (Math.abs(delta) > 10) { // 최소 변화량
         if (delta > 0) {
-          zoomIn();
+          zoomIn(pinchCenterX);  // 핀치 중심 기준 확대
         } else {
-          zoomOut();
+          zoomOut(pinchCenterX);  // 핀치 중심 기준 축소
         }
         lastPinchDistance = newDistance;
       }
