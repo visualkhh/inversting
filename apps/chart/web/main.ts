@@ -2706,16 +2706,14 @@ function render() {
     
     // 차트 영역에서 드래그 시작
     if (isInChartArea(x, y)) {
-      // 확대 중이면 패닝
-      if (zoomStart > 0 || zoomEnd < 100) {
-        isPanning = true;
-        panStartX = x;
-        canvas.style.cursor = 'grabbing';
-      } else {
-        // 확대 안된 상태면 드래그 선택
-        isDragging = true;
+      // 확대/축소 전체(0~100%)면 무조건 드래그 선택, 아니면 패닝
+      if (zoomStart === 0 && zoomEnd === 100) {
+        isTouchDragging = true;
         dragStartX = x;
         dragCurrentX = x;
+      } else {
+        isTouchPanning = true;
+        panStartX = x;
       }
     }
   });
@@ -2877,14 +2875,14 @@ function render() {
       touchStartX = x;
       touchStartY = y;
       
-      // 확대 중이면 패닝, 아니면 드래그 선택
-      if (zoomStart > 0 || zoomEnd < 100) {
-        isTouchPanning = true;
-        panStartX = x;
-      } else {
+      // 확대/축소 전체(0~100%)면 무조건 드래그 선택, 아니면 패닝
+      if (zoomStart === 0 && zoomEnd === 100) {
         isTouchDragging = true;
         dragStartX = x;
         dragCurrentX = x;
+      } else {
+        isTouchPanning = true;
+        panStartX = x;
       }
     }
   }, { passive: true });
