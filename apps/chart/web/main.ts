@@ -28,6 +28,7 @@ const toggleHideValuesEl = document.getElementById('toggle-hide-values') as HTML
 const toggleDailyGroupEl = document.getElementById('toggle-daily-group') as HTMLInputElement | null;
 const toggleHideLinesEl = document.getElementById('toggle-hide-lines') as HTMLInputElement | null;
 const toggleHideGridEl = document.getElementById('toggle-hide-grid') as HTMLInputElement | null;
+const toggleShowPointsEl = document.getElementById('toggle-show-points') as HTMLInputElement | null;
 const rangeMinEl = document.getElementById('range-min') as HTMLInputElement | null;
 const rangeMaxEl = document.getElementById('range-max') as HTMLInputElement | null;
 const rangeSliderRangeEl = document.getElementById('range-slider-range') as HTMLElement | null;
@@ -1214,7 +1215,8 @@ function drawEventMarkers(
   width: number,
   height: number,
   events: EventMarker[],
-  sortedTimes: number[]
+  sortedTimes: number[],
+  chartBottom: number
 ) {
   if (!ctx || sortedTimes.length === 0 || events.length === 0) return;
 
@@ -1226,7 +1228,7 @@ function drawEventMarkers(
     return padding + ((time - minTime) / timeRange) * (width - padding * 2);
   };
 
-  // 이벤트 마커 (전체 높이에 걸쳐)
+  // 이벤트 마커 (전체 차트 영역에 걸쳐)
   events.forEach(event => {
     const eventTime = new Date(event.timestamp).getTime() / 1000;
     if (eventTime >= minTime && eventTime <= maxTime) {
@@ -1236,7 +1238,7 @@ function drawEventMarkers(
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(x, padding);
-      ctx.lineTo(x, height - padding);
+      ctx.lineTo(x, chartBottom);  // 차트 하단까지 그리기
       ctx.stroke();
 
       ctx.save();
@@ -1482,6 +1484,7 @@ let hideValues = false;
 let dailyGroup = false;
 let hideLines = false;
 let hideGrid = false;
+let showPoints = false;
 let enabledTickers = new Set<string>();  // 상단 체크박스 - 데이터 필터링
 let visibleTickers = new Set<string>();  // 범례 클릭 - 그래프 표시/숨김
 let mouseX: number | null = null;
@@ -1491,6 +1494,8 @@ let canvasHeight = 0;
 let rangeMin = 0;  // X축 0-100%
 let rangeMax = 100; // X축 0-100%
 let legendItems: { symbol: string; x: number; y: number; width: number; height: number }[] = [];
+let dataPoints: { symbol: string; x: number; y: number; value: number; time: number; chartType: string }[] = [];
+let hoveredPoint: { symbol: string; x: number; y: number; value: number; time: number; chartType: string } | null = null;
 
 function renderWithCrosshair() {
   if (!currentData || !canvas) return;
@@ -1618,16 +1623,217 @@ function renderWithCrosshair() {
 
   // 이벤트 마커 (전체 패널에 걸쳐)
   if (showEvents) {
-    drawEventMarkers(ctx, width, totalHeight, currentData.events, sortedTimes);
+    // 차트 영역의 실제 하단 계산
+    let chartBottom = priceChartHeight;
+    if (showVolume && volumeChartHeight > 0) {
+      chartBottom = volumeTopY + volumeChartHeight;
+    }
+    if (showOBV && obvChartHeight > 0) {
+      chartBottom = obvTopY + obvChartHeight;
+    }
+    drawEventMarkers(ctx, width, totalHeight, currentData.events, sortedTimes, chartBottom);
   }
 
   // X축 레이블 (항상 표시)
   drawXAxisLabels(ctx, width, totalHeight, sortedTimes);
 
+  // 포인트 그리기 (showPoints가 켜져있을 때)
+  if (showPoints) {
+    dataPoints = []; // 초기화
+    drawDataPoints(ctx, width, filteredDataMap, sortedTimes, priceChartHeight, volumeTopY, volumeChartHeight, obvTopY, obvChartHeight, showVolume, showOBV);
+  } else {
+    dataPoints = [];
+  }
+
+  // 호버된 포인트 툴팁 표시
+  if (showPoints && hoveredPoint) {
+    drawPointTooltip(ctx, hoveredPoint);
+  }
+
   // 크로스헤어 그리기 (전체 영역)
   if (mouseX !== null && mouseY !== null) {
     drawCrosshair(ctx, width, totalHeight, mouseX, mouseY, priceChartHeight, volumeTopY, volumeChartHeight, obvTopY, obvChartHeight, showVolume, showOBV);
   }
+}
+
+function drawDataPoints(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  dataMap: Map<string, ChartData[]>,
+  sortedTimes: number[],
+  priceHeight: number,
+  volumeTopY: number,
+  volumeHeight: number,
+  obvTopY: number,
+  obvHeight: number,
+  hasVolume: boolean,
+  hasOBV: boolean
+) {
+  if (sortedTimes.length === 0) return;
+
+  const minTime = sortedTimes[0];
+  const maxTime = sortedTimes[sortedTimes.length - 1];
+  const timeRange = maxTime - minTime || 1;
+
+  const getX = (time: number): number => {
+    return padding + ((time - minTime) / timeRange) * (width - padding * 2);
+  };
+
+  // Price 영역
+  const graphTop = padding;
+  const graphBottom = priceHeight;
+  const graphHeight = graphBottom - graphTop;
+
+  // 각 티커별 min/max 계산
+  const minMaxBySymbol = new Map<string, { min: number; max: number }>();
+  const volumeMinMaxBySymbol = new Map<string, { min: number; max: number }>();
+  const obvMinMaxBySymbol = new Map<string, { min: number; max: number; values: number[] }>();
+
+  dataMap.forEach((data, symbol) => {
+    // Price min/max
+    const closes = data.map(d => d.close).filter(c => c > 0);
+    if (closes.length > 0) {
+      minMaxBySymbol.set(symbol, { min: Math.min(...closes), max: Math.max(...closes) });
+    }
+    // Volume min/max
+    const volumes = data.map(d => d.volume || 0).filter(v => v > 0);
+    if (volumes.length > 0) {
+      volumeMinMaxBySymbol.set(symbol, { min: Math.min(...volumes), max: Math.max(...volumes) });
+    }
+    // OBV min/max
+    const obvValues = calculateOBV(data);
+    if (obvValues.length > 0) {
+      obvMinMaxBySymbol.set(symbol, { min: Math.min(...obvValues), max: Math.max(...obvValues), values: obvValues });
+    }
+  });
+
+  let colorIndex = 0;
+  const pointRadius = 3;
+
+  dataMap.forEach((data, symbol) => {
+    if (!visibleTickers.has(symbol)) {
+      colorIndex++;
+      return;
+    }
+
+    const color = colors[colorIndex % colors.length];
+    const priceMinMax = minMaxBySymbol.get(symbol);
+    const volumeMinMax = volumeMinMaxBySymbol.get(symbol);
+    const obvData = obvMinMaxBySymbol.get(symbol);
+
+    // Price 포인트
+    if (priceMinMax) {
+      data.forEach(d => {
+        if (!d.close || d.close <= 0) return;
+        const time = new Date(d.timestamp).getTime() / 1000;
+        if (time < minTime || time > maxTime) return;
+
+        const x = getX(time);
+        const normalizedValue = (d.close - priceMinMax.min) / (priceMinMax.max - priceMinMax.min || 1);
+        const y = graphTop + (1 - normalizedValue) * graphHeight;
+
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x, y, pointRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        dataPoints.push({ symbol, x, y, value: d.close, time, chartType: 'Price' });
+      });
+    }
+
+    // Volume 포인트
+    if (hasVolume && volumeHeight > 0 && volumeMinMax) {
+      data.forEach(d => {
+        const volume = d.volume || 0;
+        if (volume <= 0) return;
+        const time = new Date(d.timestamp).getTime() / 1000;
+        if (time < minTime || time > maxTime) return;
+
+        const x = getX(time);
+        const normalizedValue = (volume - volumeMinMax.min) / (volumeMinMax.max - volumeMinMax.min || 1);
+        const y = volumeTopY + (1 - normalizedValue) * volumeHeight;
+
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x, y, pointRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        dataPoints.push({ symbol, x, y, value: volume, time, chartType: 'Volume' });
+      });
+    }
+
+    // OBV 포인트
+    if (hasOBV && obvHeight > 0 && obvData) {
+      const obvValues = obvData.values;
+      data.forEach((d, i) => {
+        if (i >= obvValues.length) return;
+        const time = new Date(d.timestamp).getTime() / 1000;
+        if (time < minTime || time > maxTime) return;
+
+        const x = getX(time);
+        const normalizedValue = (obvValues[i] - obvData.min) / (obvData.max - obvData.min || 1);
+        const y = obvTopY + (1 - normalizedValue) * obvHeight;
+
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x, y, pointRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        dataPoints.push({ symbol, x, y, value: obvValues[i], time, chartType: 'OBV' });
+      });
+    }
+
+    colorIndex++;
+  });
+}
+
+function drawPointTooltip(
+  ctx: CanvasRenderingContext2D,
+  point: { symbol: string; x: number; y: number; value: number; time: number; chartType: string }
+) {
+  const date = new Date(point.time * 1000);
+  const dateStr = `${date.getMonth() + 1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`;
+  
+  let valueStr: string;
+  if (point.chartType === 'Volume' || point.chartType === 'OBV') {
+    valueStr = point.value.toLocaleString();
+  } else {
+    valueStr = point.value.toFixed(2);
+  }
+  
+  const text = `${point.symbol} (${point.chartType}): ${valueStr}`;
+  const subText = dateStr;
+  
+  ctx.font = 'bold 11px Arial';
+  const textWidth = Math.max(ctx.measureText(text).width, ctx.measureText(subText).width);
+  const tooltipWidth = textWidth + 16;
+  const tooltipHeight = 36;
+  
+  // 툴팁 위치 (포인트 우상단, 화면 밖으로 나가면 조정)
+  let tooltipX = point.x + 10;
+  let tooltipY = point.y - tooltipHeight - 5;
+  
+  if (tooltipX + tooltipWidth > canvasWidth - padding) {
+    tooltipX = point.x - tooltipWidth - 10;
+  }
+  if (tooltipY < padding) {
+    tooltipY = point.y + 10;
+  }
+  
+  // 툴팁 배경
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+  ctx.beginPath();
+  ctx.roundRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight, 4);
+  ctx.fill();
+  
+  // 툴팁 텍스트
+  ctx.fillStyle = '#FFFFFF';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(text, tooltipX + 8, tooltipY + 6);
+  ctx.font = '10px Arial';
+  ctx.fillStyle = '#AAAAAA';
+  ctx.fillText(subText, tooltipX + 8, tooltipY + 20);
 }
 
 function drawCrosshair(
@@ -1905,6 +2111,17 @@ function render() {
     });
   }
 
+  if (toggleShowPointsEl) {
+    toggleShowPointsEl.checked = showPoints;
+    toggleShowPointsEl.addEventListener('change', () => {
+      showPoints = toggleShowPointsEl.checked;
+      if (!showPoints) {
+        hoveredPoint = null;
+      }
+      render();
+    });
+  }
+
   // Range slider 이벤트 설정
   function updateRangeSlider() {
     if (rangeSliderRangeEl) {
@@ -1950,20 +2167,52 @@ function render() {
     const rect = canvas.getBoundingClientRect();
     mouseX = e.clientX - rect.left;
     mouseY = e.clientY - rect.top;
+    
+    // 포인트 호버 감지
+    if (showPoints && dataPoints.length > 0) {
+      const hoverRadius = 8; // 호버 감지 반경
+      let foundPoint = null;
+      for (const point of dataPoints) {
+        const dx = mouseX - point.x;
+        const dy = mouseY - point.y;
+        if (Math.sqrt(dx * dx + dy * dy) <= hoverRadius) {
+          foundPoint = point;
+          break;
+        }
+      }
+      hoveredPoint = foundPoint;
+    }
+    
     render();
   });
 
   canvas.addEventListener('mouseleave', () => {
     mouseX = null;
     mouseY = null;
+    hoveredPoint = null;
     render();
   });
 
   // 범례 클릭으로 티커 표시/숨김 토글 (데이터 필터링 X, 그래프만 숨김)
+  // 포인트 클릭 시 툴팁 표시 (모바일 터치 지원)
   canvas.addEventListener('click', (e: MouseEvent) => {
     const rect = canvas.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
+    
+    // 포인트 클릭 감지 (모바일 터치)
+    if (showPoints && dataPoints.length > 0) {
+      const clickRadius = 15; // 클릭 감지 반경 (터치 친화적)
+      for (const point of dataPoints) {
+        const dx = clickX - point.x;
+        const dy = clickY - point.y;
+        if (Math.sqrt(dx * dx + dy * dy) <= clickRadius) {
+          hoveredPoint = hoveredPoint === point ? null : point; // 토글
+          render();
+          return;
+        }
+      }
+    }
     
     // 범례 영역 클릭 확인
     for (const item of legendItems) {
