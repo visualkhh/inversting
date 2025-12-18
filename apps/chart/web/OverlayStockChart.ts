@@ -460,9 +460,16 @@ export class OverlayStockChart {
       const minMax = minMaxBySymbol.get(symbol)!;
       const sortedPoints = points.sort((a, b) => a.time - b.time);
 
-      // 캔들
+      // 캔들 (OHLC 값이 모두 있는 포인트만)
       if (showCandles) {
-        this.drawCandles(sortedPoints, minMax, color, minTime, maxTime, graphTop, graphHeight, symbol, chartKey);
+        const candlePoints = sortedPoints.filter(p => {
+          // open, high, low, close가 모두 다른 값이어야 함 (OHLC 데이터가 있는 경우)
+          // 모두 같은 값이면 OHLC가 없어서 close로 대체된 것
+          return !(p.open === p.close && p.high === p.close && p.low === p.close);
+        });
+        if (candlePoints.length > 0) {
+          this.drawCandles(candlePoints, minMax, color, minTime, maxTime, graphTop, graphHeight, symbol, chartKey);
+        }
       }
 
       // 라인
