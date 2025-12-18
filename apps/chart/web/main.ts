@@ -13,6 +13,7 @@ const toggleDailyGroupEl = document.getElementById('toggle-daily-group') as HTML
 const toggleHideLinesEl = document.getElementById('toggle-hide-lines') as HTMLInputElement | null;
 const toggleShowGridEl = document.getElementById('toggle-show-grid') as HTMLInputElement | null;
 const toggleShowPointsEl = document.getElementById('toggle-show-points') as HTMLInputElement | null;
+const toggleNormalizeEl = document.getElementById('toggle-normalize') as HTMLInputElement | null;
 const rangeMinEl = document.getElementById('range-min') as HTMLInputElement | null;
 const rangeMaxEl = document.getElementById('range-max') as HTMLInputElement | null;
 const rangeSliderRangeEl = document.getElementById('range-slider-range') as HTMLElement | null;
@@ -32,13 +33,13 @@ function setStatus(text: string) {
   if (statusTextEl) statusTextEl.textContent = text;
 }
 
-function makeSampleData(): { dataMap: Map<string, { color?: string; datas: ChartData[] }>; events: EventMarker[] } {
+function makeSampleData(): { dataMap: Map<string, { color?: string; datas: ChartData[]; events?: EventMarker[] }>; commonEvents: EventMarker[] } {
   const symbols = ['AVGO', 'MU', '005930.KS', '000660.KS'];
   const start = new Date('2025-09-01T00:00:00Z').getTime();
   const day = 24 * 60 * 60 * 1000;
   const points = 60;
 
-  const dataMap = new Map<string, { color?: string; datas: ChartData[] }>();
+  const dataMap = new Map<string, { color?: string; datas: ChartData[]; events?: EventMarker[] }>();
   symbols.forEach((sym, idx) => {
     let price = 100 + idx * 10;
     const arr: ChartData[] = [];
@@ -56,16 +57,16 @@ function makeSampleData(): { dataMap: Map<string, { color?: string; datas: Chart
     dataMap.set(sym, { datas: arr });
   });
 
-  const events: EventMarker[] = [
+  const commonEvents: EventMarker[] = [
     { timestamp: '2025-09-15 09:30:00', label: 'Event A', color: '#FF0000' },
     { timestamp: '2025-10-15 09:30:00', label: 'Event B', color: '#0000FF' },
     { timestamp: '2025-11-15 09:30:00', label: 'Event C', color: '#00AA00' },
   ];
 
-  return { dataMap, events };
+  return { dataMap, commonEvents };
 }
 
-async function loadData(): Promise<{ dataMap: Map<string, { color?: string; datas: ChartData[] }>; events: EventMarker[] }> {
+async function loadData(): Promise<{ dataMap: Map<string, { color?: string; datas: ChartData[]; events?: EventMarker[] }>; commonEvents: EventMarker[] }> {
   try {
     // 1. 티커 목록 로드
     const tickersResp = await fetch('data/tickers.json');
@@ -79,9 +80,7 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
     setStatus(`Loading ${tickers.length} tickers...`);
     
     // 2. 각 티커별 데이터 및 이벤트 로드
-    const map = new Map<string, { color?: string; datas: ChartData[] }>();
-    const allEvents: EventMarker[] = [];
-    const eventSet = new Set<string>(); // 중복 제거용
+    const map = new Map<string, { color?: string; datas: ChartData[]; events?: EventMarker[] }>();
     
     const loadPromises = tickers.map(async (ticker) => {
       try {
@@ -93,25 +92,19 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
         }
         const data = await dataResp.json() as ChartData[];
         const fData = data.filter(it => it.close !== null || it.open !== null);
-        map.set(ticker, { datas: fData });
         
-        // 이벤트 로드
+        // 티커별 이벤트 로드
+        let tickerEvents: EventMarker[] | undefined = undefined;
         try {
           const eventsResp = await fetch(`data/${ticker}_events.json`);
           if (eventsResp.ok) {
-            const tickerEvents = await eventsResp.json() as EventMarker[];
-            // 중복 제거 (timestamp + label 조합으로)
-            tickerEvents.forEach((event: EventMarker) => {
-              const key = `${event.timestamp}_${event.label}`;
-              if (!eventSet.has(key)) {
-                eventSet.add(key);
-                allEvents.push(event);
-              }
-            });
+            tickerEvents = await eventsResp.json() as EventMarker[];
           }
         } catch (err) {
           console.warn(`No events file for ${ticker}`);
         }
+        
+        map.set(ticker, { datas: fData, events: tickerEvents });
       } catch (err) {
         console.warn(`Error loading ${ticker}:`, err);
       }
@@ -119,17 +112,26 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
     
     await Promise.all(loadPromises);
     
-    const events = allEvents;
+    // 3. 공통 이벤트 로드
+    let commonEvents: EventMarker[] = [];
+    try {
+      const commonEventsResp = await fetch('data/events.json');
+      if (commonEventsResp.ok) {
+        commonEvents = await commonEventsResp.json() as EventMarker[];
+      }
+    } catch (err) {
+      console.warn('No common events file');
+    }
     
-    setStatus(`Loaded ${map.size} tickers, ${events.length} events`);
-    return { dataMap: map, events };
+    setStatus(`Loaded ${map.size} tickers, ${commonEvents.length} common events`);
+    return { dataMap: map, commonEvents };
   } catch (err) {
     setStatus('Using sample data (place data files to override)');
     return makeSampleData();
   }
 }
 
-let currentData: { dataMap: Map<string, { color?: string; datas: ChartData[] }>; events: EventMarker[] } | null = null;
+let currentData: { dataMap: Map<string, { color?: string; datas: ChartData[]; events?: EventMarker[] }>; commonEvents: EventMarker[] } | null = null;
 let overlayChart: OverlayStockChart | null = null;
 let showEvents = false;
 let showCandles = false;
@@ -143,6 +145,7 @@ let dailyGroup = false;
 let hideLines = false;
 let showGrid = false;
 let showPoints = false;
+let normalize = false;
 let enabledTickers = new Set<string>();
 let visibleTickers = new Set<string>();
 let rangeMin = 0;
@@ -158,7 +161,7 @@ let rangeMax = 100;
   });
   
   // OverlayStockChart 초기화
-  overlayChart = new OverlayStockChart(canvas, currentData.dataMap, currentData.events, {
+  overlayChart = new OverlayStockChart(canvas, currentData.dataMap, currentData.commonEvents, {
     enabledTickers,
     visibleTickers,
     showEvents,
@@ -173,6 +176,7 @@ let rangeMax = 100;
     hideLines,
     showGrid,
     showPoints,
+    normalize,
     rangeMin,
     rangeMax
   });
@@ -339,6 +343,14 @@ let rangeMax = 100;
     toggleShowPointsEl.addEventListener('change', () => {
       showPoints = toggleShowPointsEl.checked;
       overlayChart?.updateState({ showPoints });
+    });
+  }
+
+  if (toggleNormalizeEl) {
+    toggleNormalizeEl.checked = normalize;
+    toggleNormalizeEl.addEventListener('change', () => {
+      normalize = toggleNormalizeEl.checked;
+      overlayChart?.updateState({ normalize });
     });
   }
 
