@@ -1367,7 +1367,8 @@ export class OverlayStockChart {
   ): { type: string; x: number; y: number; width: number; height: number }[] {
     const buttonSize = 24;
     const buttonGap = 6;
-    const startX = this.width - this.padding - (buttonSize * 3 + buttonGap * 2);
+    const totalButtonWidth = buttonSize * 3 + buttonGap * 2;
+    const startX = (this.width - totalButtonWidth) / 2;
     const startY = this.padding + 5;
     
     const zoomButtons: { type: string; x: number; y: number; width: number; height: number }[] = [];
@@ -1417,19 +1418,19 @@ export class OverlayStockChart {
       const toDate = formatDateTime(displayMaxTime);
       const dateRangeText = `${fromDate} ~ ${toDate}`;
       
-      // 날짜 범위를 버튼 위에 표시
+      // 날짜 범위를 버튼 위에 중앙 정렬로 표시
       this.ctx.font = '10px Arial';
       this.ctx.fillStyle = '#333';
-      this.ctx.textAlign = 'right';
-      this.ctx.fillText(dateRangeText, startX + buttonSize * 3 + buttonGap * 2, startY - 5);
+      this.ctx.textAlign = 'center';
+      this.ctx.fillText(dateRangeText, this.width / 2, startY - 5);
     }
     
-    // 줌 모드일 때 퍼센트를 버튼 아래에 표시
+    // 줌 모드일 때 퍼센트를 버튼 아래에 중앙 정렬로 표시
     if (zoomStart > 0 || zoomEnd < 100) {
       this.ctx.font = '10px Arial';
       this.ctx.fillStyle = '#666';
-      this.ctx.textAlign = 'left';
-      this.ctx.fillText(`${zoomStart.toFixed(0)}%-${zoomEnd.toFixed(0)}%`, startX, startY + buttonSize + 12);
+      this.ctx.textAlign = 'center';
+      this.ctx.fillText(`${zoomStart.toFixed(0)}%-${zoomEnd.toFixed(0)}%`, this.width / 2, startY + buttonSize + 5);
     }
     
     return zoomButtons;
