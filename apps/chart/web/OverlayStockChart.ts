@@ -13,7 +13,7 @@ interface EventMarker {
   label: string;
   color?: string;
 }
-
+export type  a ={ [key: string]: any; }
 interface ChartOptions {
   showEvents?: boolean;
   showCandles?: boolean;
