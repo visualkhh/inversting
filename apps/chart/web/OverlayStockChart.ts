@@ -162,6 +162,10 @@ export class OverlayStockChart {
   private lastTapTime = 0;
   private lastTapX = 0;
   private lastTapY = 0;
+  
+  // 더블클릭 감지 (PC)
+  private clickTimer: number | null = null;
+  private clickDelay = 250; // 250ms 내에 더블클릭 감지
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -1707,8 +1711,8 @@ export class OverlayStockChart {
     displayMinTime?: number, 
     displayMaxTime?: number
   ): { type: string; x: number; y: number; width: number; height: number }[] {
-    const buttonSize = 18;
-    const buttonGap = 6;
+    const buttonSize = 25;
+    const buttonGap = 10;
     const totalButtonWidth = buttonSize * 3 + buttonGap * 2;
     const startX = (this.width - totalButtonWidth) / 2;
     const startY = this.padding + 5;
@@ -1734,7 +1738,7 @@ export class OverlayStockChart {
       this.ctx.stroke();
       
       this.ctx.fillStyle = '#333';
-      this.ctx.font = 'bold 10px Arial';
+      this.ctx.font = 'bold 13px Arial';
       this.ctx.textAlign = 'center';
       this.ctx.textBaseline = 'middle';
       this.ctx.fillText(btn.label, x + buttonSize / 2, y + buttonSize / 2);
@@ -2314,6 +2318,15 @@ export class OverlayStockChart {
     this.canvas.addEventListener('mouseup', (e: MouseEvent) => {
       const rect = this.canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      // 줌 버튼 클릭 시 조기 반환 (클릭 이벤트에서 처리)
+      for (const btn of this.zoomButtons) {
+        if (x >= btn.x && x <= btn.x + btn.width &&
+            y >= btn.y && y <= btn.y + btn.height) {
+          return;
+        }
+      }
       
       if (this.isDragging && this.dragStartX !== null && this.dragCurrentX !== null) {
         const startX = Math.min(this.dragStartX, this.dragCurrentX);
@@ -2357,7 +2370,8 @@ export class OverlayStockChart {
       const rect = this.canvas.getBoundingClientRect();
       const clickX = e.clientX - rect.left;
       const clickY = e.clientY - rect.top;
-      
+
+      // 줌 버튼은 즉시 처리 (더블클릭 대기 없음)
       for (const btn of this.zoomButtons) {
         if (clickX >= btn.x && clickX <= btn.x + btn.width &&
             clickY >= btn.y && clickY <= btn.y + btn.height) {
@@ -2367,39 +2381,49 @@ export class OverlayStockChart {
           return;
         }
       }
+
+      // 차트 영역 클릭은 더블클릭과 구분하기 위해 지연 처리
+      if (this.clickTimer !== null) {
+        clearTimeout(this.clickTimer);
+        this.clickTimer = null;
+      }
       
-      if (this.state.showPoints && this.dataPoints.length > 0) {
-        const clickRadius = 12;
-        for (const point of this.dataPoints) {
-          const dx = clickX - point.x;
-          const dy = clickY - point.y;
-          if (Math.sqrt(dx * dx + dy * dy) <= clickRadius) {
-            this.hoveredPoint = this.hoveredPoint === point ? null : point;
+      this.clickTimer = window.setTimeout(() => {
+        this.clickTimer = null;
+        
+        if (this.state.showPoints && this.dataPoints.length > 0) {
+          const clickRadius = 12;
+          for (const point of this.dataPoints) {
+            const dx = clickX - point.x;
+            const dy = clickY - point.y;
+            if (Math.sqrt(dx * dx + dy * dy) <= clickRadius) {
+              this.hoveredPoint = this.hoveredPoint === point ? null : point;
+              this.render();
+              return;
+            }
+          }
+        }
+        
+        for (const item of this.legendItems) {
+          if (clickX >= item.x && clickX <= item.x + item.width &&
+              clickY >= item.y && clickY <= item.y + item.height) {
+            const wasVisible = this.state.visibleTickers.has(item.symbol);
+            if (wasVisible) {
+              this.state.visibleTickers.delete(item.symbol);
+            } else {
+              this.state.visibleTickers.add(item.symbol);
+            }
+            
+            // 콜백 호출
+            if (this.config.onLegendClick) {
+              this.config.onLegendClick(item.symbol, !wasVisible);
+            }
+            
             this.render();
             return;
           }
         }
-      }
-      
-      for (const item of this.legendItems) {
-        if (clickX >= item.x && clickX <= item.x + item.width &&
-            clickY >= item.y && clickY <= item.y + item.height) {
-          const wasVisible = this.state.visibleTickers.has(item.symbol);
-          if (wasVisible) {
-            this.state.visibleTickers.delete(item.symbol);
-          } else {
-            this.state.visibleTickers.add(item.symbol);
-          }
-          
-          // 콜백 호출
-          if (this.config.onLegendClick) {
-            this.config.onLegendClick(item.symbol, !wasVisible);
-          }
-          
-          this.render();
-          break;
-        }
-      }
+      }, this.clickDelay);
     });
 
     // 더블클릭 (PC)
@@ -2407,7 +2431,21 @@ export class OverlayStockChart {
       const rect = this.canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      
+
+      // 클릭 타이머 취소 (더블클릭이 감지되면 단일 클릭 처리 안함)
+      if (this.clickTimer !== null) {
+        clearTimeout(this.clickTimer);
+        this.clickTimer = null;
+      }
+
+      // 줌 버튼 영역이면 무시
+      for (const btn of this.zoomButtons) {
+        if (x >= btn.x && x <= btn.x + btn.width &&
+            y >= btn.y && y <= btn.y + btn.height) {
+          return;
+        }
+      }
+
       // 확대 상태에서 차트 영역을 더블클릭하면 초기화
       if (this.isInChartArea(x, y) && (this.zoomStart > 0 || this.zoomEnd < 100)) {
         this.zoomReset();
@@ -2730,18 +2768,18 @@ export class OverlayStockChart {
     const width = Math.max(300, cssW);
     let totalHeight = Math.max(200, cssH);
     
-    // 차트 영역 너비 계산 (기본 padding 기준으로 고정)
-    const defaultPadding = 50;
-    this.chartAreaWidth = width - defaultPadding * 2;
-    this.chartAreaLeft = defaultPadding;
+    // 차트 영역 계산: 캔버스에서 padding을 뺀 영역
+    // chartAreaLeft는 paddingLeft, chartAreaWidth는 전체에서 좌우 padding을 뺀 값
+    this.chartAreaLeft = this.paddingLeft;
+    this.chartAreaWidth = width - this.paddingLeft - this.paddingRight;
     
-    // 실제 그리기에 사용할 padding은 기본값 사용 (차트 영역 고정)
-    this.padding = defaultPadding;
+    // 기본 padding은 차트 레이아웃 계산용 (상하 여백)
+    this.padding = this.paddingTop;
     
     // 차트 레이아웃 계산
     const chartCount = this.state.visibleChartKeys.length;
-    const xAxisLabelHeight = 40;
-    const availableHeight = totalHeight - this.padding - xAxisLabelHeight;
+    const xAxisLabelHeight = this.paddingBottom;
+    const availableHeight = totalHeight - this.paddingTop - xAxisLabelHeight;
     const heightPerChart = availableHeight / chartCount;
     
     // 각 차트의 위치와 높이 계산
@@ -2749,7 +2787,7 @@ export class OverlayStockChart {
     this.state.visibleChartKeys.forEach((key, index) => {
       chartLayouts.push({
         key,
-        topY: this.padding + index * heightPerChart,
+        topY: this.paddingTop + index * heightPerChart,
         height: heightPerChart
       });
     });

@@ -285,9 +285,9 @@ let rangeMax = 100;
     },
     {
       paddingLeft: 100,
-      paddingRight: 300,
-      paddingTop: 100,
-      paddingBottom: 100,
+      // paddingRight: 100,
+      // paddingTop: 100,
+      // paddingBottom: 100,
       xFormat: (xValue: number) => {
         const date = new Date(xValue * 1000);
         const year = date.getFullYear();
