@@ -30,7 +30,7 @@ async function main() {
   // 실제 주식 데이터 및 이벤트 가져오기 (chart + quoteSummary 모두)
   const dataMap = await loader.loadStocks(symbols);
   const allEvents = await loader.loadAllEvents(symbols);
-  allEvents.push({timestamp: '2025-09-23 23:00:00', color:'#FF0000', label: 'Micron Technology Q4'})
+  allEvents.push({timestamp: '2025-09-23 23:00:00',  label: 'Micron Technology Q4'})
 
   const outDir = path.resolve(__dirname, 'data');
   mkdirSync(outDir, { recursive: true });

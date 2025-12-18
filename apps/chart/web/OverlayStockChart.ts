@@ -38,14 +38,15 @@ interface FormatResult {
 type FormatReturn = string | FormatResult;
 
 interface ChartConfig {
-  xFormat?: (xValue: number, chartKey?: string) => FormatReturn; // X축 레이블 포맷
-  yFormat?: (yValue: number, chartKey?: string) => FormatReturn; // Y축 레이블 포맷
+  xFormat?: (xValue: number, index: number, total: number, chartKey?: string) => FormatReturn; // X축 레이블 포맷
+  yFormat?: (yValue: number, index: number, total: number, chartKey?: string) => FormatReturn; // Y축 레이블 포맷
   labelFormat?: (chartKey: string) => FormatReturn; // 차트 키별 Y축 타이틀 포맷
   crosshairXFormat?: (xValue: number) => FormatReturn; // 크로스헤어 X축 값 포맷
   crosshairYFormat?: (yValue: number, chartKey: string, isNormalized: boolean) => FormatReturn; // 크로스헤어 Y축 값 포맷
   tooltipLabelFormat?: (symbol: string, chartKey: string, value: number, time: number) => FormatReturn; // 툴팁 메인 텍스트 포맷 (전체)
   tooltipXFormat?: (xValue: number, symbol: string, chartKey: string) => FormatReturn; // 툴팁 서브 텍스트 포맷
   tooltipYFormat?: (yValue: number, chartKey: string, symbol: string) => FormatReturn; // 툴팁 Y축 값 포맷 (tooltipLabelFormat 없을 때)
+  zoomRangeFormat?: (minTime: number, maxTime: number) => FormatReturn; // 줌 버튼 위 날짜 범위 포맷
   
   // 스타일 설정
   lineStrokeStyle?: string | ((symbol: string, chartKey: string) => string); // 라인 그래프 색상
@@ -169,7 +170,7 @@ export class OverlayStockChart {
 
   constructor(
     canvas: HTMLCanvasElement,
-    dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>,
+    dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] } | ChartData[]; events?: EventMarker[] }>,
     commonEvents: EventMarker[] = [],
     initialState: RenderState,
     config?: ChartConfig
@@ -178,7 +179,7 @@ export class OverlayStockChart {
     this.ctx = canvas.getContext('2d')!;
     this.width = 0;
     this.height = 0;
-    this.dataMap = this.convertDataMap(dataMap);
+    this.dataMap = this.normalizeDataMap(dataMap);
     this.commonEvents = commonEvents;
     this.state = initialState;
     this.config = config || {};
@@ -218,10 +219,31 @@ export class OverlayStockChart {
   }
 
   // main.ts에서 받은 데이터를 내부 형식으로 변환
-  private convertDataMap(
-    inputMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>
+  private normalizeDataMap(
+    inputMap: Map<string, { color?: string; data: { [key: string]: ChartData[] } | ChartData[]; events?: EventMarker[] }>
   ): Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }> {
-    return inputMap;
+    const normalizedMap = new Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>();
+    
+    inputMap.forEach((value, symbol) => {
+      // data가 배열인지 객체인지 확인
+      if (Array.isArray(value.data)) {
+        // 단일 배열 형식: ChartData[] -> { 'default': ChartData[] }로 변환
+        normalizedMap.set(symbol, {
+          color: value.color,
+          data: { 'default': value.data as ChartData[] },
+          events: value.events
+        });
+      } else {
+        // 이미 객체 형식: { [key: string]: ChartData[] }
+        normalizedMap.set(symbol, {
+          color: value.color,
+          data: value.data as { [key: string]: ChartData[] },
+          events: value.events
+        });
+      }
+    });
+    
+    return normalizedMap;
   }
 
   destroy() {
@@ -239,8 +261,8 @@ export class OverlayStockChart {
     this.resizeObserver.observe(this.canvas);
   }
 
-  setData(dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>, commonEvents: EventMarker[] = []) {
-    this.dataMap = this.convertDataMap(dataMap);
+  setData(dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] } | ChartData[]; events?: EventMarker[] }>, commonEvents: EventMarker[] = []) {
+    this.dataMap = this.normalizeDataMap(dataMap);
     this.commonEvents = commonEvents;
     
     // 티커별 색상 재초기화
@@ -498,6 +520,8 @@ export class OverlayStockChart {
     this.ctx.strokeStyle = '#000000';
     this.ctx.lineWidth = 1;
     
+    const totalLabels = 6; // 0부터 5까지 총 6개
+    
     for (let i = 0; i <= 5; i++) {
       const normalizedValue = (100 - i * 20) / 100;
       const scaledValue = this.chartMargin + normalizedValue * (1 - this.chartMargin * 2);
@@ -511,7 +535,7 @@ export class OverlayStockChart {
       } else {
         // 비정규화 모드: 실제 값 표시
         const actualValue = minValue + normalizedValue * (maxValue - minValue);
-        const formatted = this.config.yFormat ? this.config.yFormat(actualValue, chartKey) : actualValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+        const formatted = this.config.yFormat ? this.config.yFormat(actualValue, i, totalLabels, chartKey) : actualValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
         labelText = this.applyFormatResult(formatted);
       }
       
@@ -1597,18 +1621,18 @@ export class OverlayStockChart {
     const minTime = displayMinTime ?? sortedTimes[0];
     const maxTime = displayMaxTime ?? sortedTimes[sortedTimes.length - 1];
 
-    // 모든 이벤트 수집 (티커별 + 공통)
-    const allEvents: EventMarker[] = [];
+    // 모든 이벤트 수집 (티커별 + 공통) - 심볼 정보와 함께
+    const allEvents: Array<EventMarker & { symbol?: string }> = [];
     
-    // 공통 이벤트 추가
+    // 공통 이벤트 추가 (심볼 없음)
     if (this.commonEvents && this.commonEvents.length > 0) {
-      allEvents.push(...this.commonEvents);
+      allEvents.push(...this.commonEvents.map(e => ({ ...e, symbol: undefined })));
     }
     
-    // 활성화된 티커의 이벤트 추가
+    // 활성화된 티커의 이벤트 추가 (심볼 정보 포함)
     this.dataMap.forEach((value, symbol) => {
       if (this.state.enabledTickers.has(symbol) && value.events && value.events.length > 0) {
-        allEvents.push(...value.events);
+        allEvents.push(...value.events.map(e => ({ ...e, symbol })));
       }
     });
 
@@ -1619,7 +1643,20 @@ export class OverlayStockChart {
       const eventTime = new Date(event.timestamp).getTime() / 1000;
       if (eventTime >= minTime && eventTime <= maxTime) {
         const x = this.getX(eventTime, minTime, maxTime);
-        const eventColor = event.color || '#FF6600';
+        
+        // 색상 우선순위: 1. 이벤트 자체 color, 2. 심볼 color, 3. 심볼 할당 색상, 4. 기본 색상
+        let eventColor = event.color;
+        if (!eventColor && event.symbol) {
+          const symbolData = this.dataMap.get(event.symbol);
+          if (symbolData?.color) {
+            eventColor = symbolData.color;
+          } else {
+            eventColor = this.getTickerColor(event.symbol);
+          }
+        }
+        if (!eventColor) {
+          eventColor = '#FF6600'; // 최종 기본 색상
+        }
         
         this.ctx.strokeStyle = eventColor;
         this.ctx.lineWidth = 2;
@@ -1688,21 +1725,30 @@ export class OverlayStockChart {
     const maxLabels = 12;
     const step = Math.max(1, Math.ceil(dayStartTimes.length / maxLabels));
     
-    this.ctx.textAlign = 'center';
+    // 실제로 그려질 레이블 개수 계산
+    const labelsToRender: number[] = [];
     for (let i = 0; i < dayStartTimes.length; i += step) {
       const time = dayStartTimes[i];
       const x = this.getX(time, minTime, maxTime);
+      if (x >= this.padding && x <= this.width - this.padding) {
+        labelsToRender.push(time);
+      }
+    }
+    
+    const totalLabels = labelsToRender.length;
+    
+    this.ctx.textAlign = 'center';
+    labelsToRender.forEach((time, index) => {
+      const x = this.getX(time, minTime, maxTime);
       
-      if (x < this.padding || x > this.width - this.padding) continue;
-      
-      const formatted = this.config.xFormat ? this.config.xFormat(time) : time.toString();
+      const formatted = this.config.xFormat ? this.config.xFormat(time, index, totalLabels) : time.toString();
       const labelText = this.applyFormatResult(formatted);
       this.ctx.fillText(labelText, x, labelY);
       this.ctx.beginPath();
       this.ctx.moveTo(x, tickYStart);
       this.ctx.lineTo(x, tickYEnd);
       this.ctx.stroke();
-    }
+    });
   }
 
   drawZoomButtons(
@@ -1748,19 +1794,27 @@ export class OverlayStockChart {
     
     // 현재 보고 있는 시간 범위를 항상 버튼 위에 표시
     if (displayMinTime !== undefined && displayMaxTime !== undefined) {
-      // 날짜 포맷 함수
-      const formatDateTime = (timestamp: number): string => {
-        if (this.config.xFormat) {
-          const formatted = this.config.xFormat(timestamp);
-          return this.applyFormatResult(formatted);
-        } else {
-          return timestamp.toString();
-        }
-      };
+      let dateRangeText: string;
       
-      const fromDate = formatDateTime(displayMinTime);
-      const toDate = formatDateTime(displayMaxTime);
-      const dateRangeText = `${fromDate} ~ ${toDate}`;
+      if (this.config.zoomRangeFormat) {
+        // zoomRangeFormat 콜백이 있으면 사용
+        const formatted = this.config.zoomRangeFormat(displayMinTime, displayMaxTime);
+        dateRangeText = this.applyFormatResult(formatted);
+      } else {
+        // 기본 포맷: xFormat 사용하거나 timestamp 그대로
+        const formatDateTime = (timestamp: number, index: number): string => {
+          if (this.config.xFormat) {
+            const formatted = this.config.xFormat(timestamp, index, 2);
+            return this.applyFormatResult(formatted);
+          } else {
+            return timestamp.toString();
+          }
+        };
+        
+        const fromDate = formatDateTime(displayMinTime, 0);
+        const toDate = formatDateTime(displayMaxTime, 1);
+        dateRangeText = `${fromDate} ~ ${toDate}`;
+      }
       
       // 날짜 범위를 버튼 위에 중앙 정렬로 표시
       this.ctx.font = '10px Arial';
@@ -1855,7 +1909,7 @@ export class OverlayStockChart {
       const formatted = this.config.crosshairXFormat 
         ? this.config.crosshairXFormat(currentTime)
         : (this.config.xFormat 
-          ? this.config.xFormat(currentTime)
+          ? this.config.xFormat(currentTime, 0, 1)
           : currentTime.toString());
       const dateStr = this.applyFormatResult(formatted);
       
@@ -1897,7 +1951,7 @@ export class OverlayStockChart {
             const formatted = this.config.crosshairYFormat
               ? this.config.crosshairYFormat(actualValue, layout.key, false)
               : (this.config.yFormat 
-                ? this.config.yFormat(actualValue, layout.key) 
+                ? this.config.yFormat(actualValue, 0, 1, layout.key) 
                 : actualValue.toLocaleString(undefined, { maximumFractionDigits: 2 }));
             valueStr = this.applyFormatResult(formatted);
           }
@@ -2011,7 +2065,7 @@ export class OverlayStockChart {
     const xFormatted = this.config.tooltipXFormat
       ? this.config.tooltipXFormat(point.time, point.symbol, point.chartType)
       : (this.config.xFormat 
-        ? this.config.xFormat(point.time, point.chartType)
+        ? this.config.xFormat(point.time, 0, 1, point.chartType)
         : point.time.toString());
     const dateStr = this.applyFormatResult(xFormatted);
     
@@ -2025,7 +2079,7 @@ export class OverlayStockChart {
         const formatted = this.config.tooltipYFormat(point.value, point.chartType, point.symbol);
         valueStr = this.applyFormatResult(formatted);
       } else if (this.config.yFormat) {
-        const formatted = this.config.yFormat(point.value, point.chartType);
+        const formatted = this.config.yFormat(point.value, 0, 1, point.chartType);
         valueStr = this.applyFormatResult(formatted);
       } else if (point.chartType === 'Volume' || point.chartType === 'OBV') {
         valueStr = point.value.toLocaleString();

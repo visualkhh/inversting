@@ -288,7 +288,10 @@ let rangeMax = 100;
       // paddingRight: 100,
       // paddingTop: 100,
       // paddingBottom: 100,
-      xFormat: (xValue: number) => {
+      xFormat: (xValue: number, index, total) => {
+        if (index !==0 && index !== total-1 && index % Math.ceil(total / 2) !== 0) {
+          return '';
+        }
         const date = new Date(xValue * 1000);
         const year = date.getFullYear();
         const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -298,13 +301,17 @@ let rangeMax = 100;
         const seconds = String(date.getSeconds()).padStart(2, '0');
         return `${year}-${month}-${day}`;
       },
-      // yFormat: (yValue: number) => {
+      yFormat: (yValue: number, index, total) => {
+        if (index !==0 && index !== total-1 && index % Math.ceil(total / 2) !== 0) {
+          return '';
+        }
+          return yValue.toLocaleString(undefined, {maximumFractionDigits: 2});
       //   if (overlayChart?.getState()?.normalize) {
       //     return yValue.toLocaleString(undefined, {maximumFractionDigits: 2});
       //   } else {
       //     return {font:'6px Arial', value: yValue.toLocaleString(undefined, {maximumFractionDigits: 2})};
       //   }
-      // },
+      },
       // tooltipLabelFormat: (chartKey: string) => {
       //   return 'zzzzz'
       // },
