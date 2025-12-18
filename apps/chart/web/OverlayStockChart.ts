@@ -71,6 +71,8 @@ interface ChartConfig {
   
   // 콜백
   onLegendClick?: (symbol: string, isVisible: boolean) => void; // 범례 클릭 콜백
+  onZoomButtonClick?: (type: 'zoomIn' | 'zoomOut' | 'reset', zoomStart: number, zoomEnd: number) => void; // 줌 버튼 클릭 콜백
+  onPointTooltip?: (point: { symbol: string; chartType: string; value: number; time: number; x: number; y: number } | null) => void; // 포인트 툴팁 열림/닫힘 콜백
 }
 
 interface RenderState {
@@ -2327,6 +2329,12 @@ export class OverlayStockChart {
     this.canvas.addEventListener('mouseleave', () => {
       this.mouseX = null;
       this.mouseY = null;
+      
+      // 툴팁이 열려있었다면 닫힘 콜백 호출
+      if (this.hoveredPoint !== null && this.config.onPointTooltip) {
+        this.config.onPointTooltip(null);
+      }
+      
       this.hoveredPoint = null;
       this.isDragging = false;
       this.dragStartX = null;
@@ -2429,9 +2437,22 @@ export class OverlayStockChart {
       for (const btn of this.zoomButtons) {
         if (clickX >= btn.x && clickX <= btn.x + btn.width &&
             clickY >= btn.y && clickY <= btn.y + btn.height) {
-          if (btn.type === 'zoomIn') this.zoomIn();
-          else if (btn.type === 'zoomOut') this.zoomOut();
-          else if (btn.type === 'reset') this.zoomReset();
+          if (btn.type === 'zoomIn') {
+            this.zoomIn();
+            if (this.config.onZoomButtonClick) {
+              this.config.onZoomButtonClick('zoomIn', this.zoomStart, this.zoomEnd);
+            }
+          } else if (btn.type === 'zoomOut') {
+            this.zoomOut();
+            if (this.config.onZoomButtonClick) {
+              this.config.onZoomButtonClick('zoomOut', this.zoomStart, this.zoomEnd);
+            }
+          } else if (btn.type === 'reset') {
+            this.zoomReset();
+            if (this.config.onZoomButtonClick) {
+              this.config.onZoomButtonClick('reset', this.zoomStart, this.zoomEnd);
+            }
+          }
           return;
         }
       }
@@ -2451,7 +2472,14 @@ export class OverlayStockChart {
             const dx = clickX - point.x;
             const dy = clickY - point.y;
             if (Math.sqrt(dx * dx + dy * dy) <= clickRadius) {
-              this.hoveredPoint = this.hoveredPoint === point ? null : point;
+              const newHoveredPoint = this.hoveredPoint === point ? null : point;
+              this.hoveredPoint = newHoveredPoint;
+              
+              // 콜백 호출
+              if (this.config.onPointTooltip) {
+                this.config.onPointTooltip(newHoveredPoint);
+              }
+              
               this.render();
               return;
             }
@@ -2696,9 +2724,22 @@ export class OverlayStockChart {
           for (const btn of this.zoomButtons) {
             if (tapX >= btn.x && tapX <= btn.x + btn.width &&
                 tapY >= btn.y && tapY <= btn.y + btn.height) {
-              if (btn.type === 'zoomIn') this.zoomIn();
-              else if (btn.type === 'zoomOut') this.zoomOut();
-              else if (btn.type === 'reset') this.zoomReset();
+              if (btn.type === 'zoomIn') {
+                this.zoomIn();
+                if (this.config.onZoomButtonClick) {
+                  this.config.onZoomButtonClick('zoomIn', this.zoomStart, this.zoomEnd);
+                }
+              } else if (btn.type === 'zoomOut') {
+                this.zoomOut();
+                if (this.config.onZoomButtonClick) {
+                  this.config.onZoomButtonClick('zoomOut', this.zoomStart, this.zoomEnd);
+                }
+              } else if (btn.type === 'reset') {
+                this.zoomReset();
+                if (this.config.onZoomButtonClick) {
+                  this.config.onZoomButtonClick('reset', this.zoomStart, this.zoomEnd);
+                }
+              }
               break;
             }
           }
@@ -2709,7 +2750,14 @@ export class OverlayStockChart {
               const dx = tapX - point.x;
               const dy = tapY - point.y;
               if (Math.sqrt(dx * dx + dy * dy) <= tapRadius) {
-                this.hoveredPoint = this.hoveredPoint === point ? null : point;
+                const newHoveredPoint = this.hoveredPoint === point ? null : point;
+                this.hoveredPoint = newHoveredPoint;
+                
+                // 콜백 호출
+                if (this.config.onPointTooltip) {
+                  this.config.onPointTooltip(newHoveredPoint);
+                }
+                
                 break;
               }
             }
