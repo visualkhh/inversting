@@ -32,13 +32,13 @@ function setStatus(text: string) {
   if (statusTextEl) statusTextEl.textContent = text;
 }
 
-function makeSampleData(): { dataMap: Map<string, ChartData[]>; events: EventMarker[] } {
+function makeSampleData(): { dataMap: Map<string, { color?: string; datas: ChartData[] }>; events: EventMarker[] } {
   const symbols = ['AVGO', 'MU', '005930.KS', '000660.KS'];
   const start = new Date('2025-09-01T00:00:00Z').getTime();
   const day = 24 * 60 * 60 * 1000;
   const points = 60;
 
-  const dataMap = new Map<string, ChartData[]>();
+  const dataMap = new Map<string, { color?: string; datas: ChartData[] }>();
   symbols.forEach((sym, idx) => {
     let price = 100 + idx * 10;
     const arr: ChartData[] = [];
@@ -53,7 +53,7 @@ function makeSampleData(): { dataMap: Map<string, ChartData[]>; events: EventMar
       arr.push({ timestamp: ts, open, high, low, close });
       price = close;
     }
-    dataMap.set(sym, arr);
+    dataMap.set(sym, { datas: arr });
   });
 
   const events: EventMarker[] = [
@@ -65,27 +65,71 @@ function makeSampleData(): { dataMap: Map<string, ChartData[]>; events: EventMar
   return { dataMap, events };
 }
 
-async function loadData(): Promise<{ dataMap: Map<string, ChartData[]>; events: EventMarker[] }> {
+async function loadData(): Promise<{ dataMap: Map<string, { color?: string; datas: ChartData[] }>; events: EventMarker[] }> {
   try {
-    const resp = await fetch('data/chart-data.json');
-    if (!resp.ok) throw new Error('No data file');
-    const json = await resp.json();
-    const map = new Map<string, ChartData[]>();
-    Object.keys(json.dataMap || {}).forEach(key => {
-      const dataMapElement = json.dataMap[key] as ChartData[];
-      const fData = dataMapElement.filter(it => it.close !== null || it.open !== null)
-      map.set(key, fData);
+    // 1. 티커 목록 로드
+    const tickersResp = await fetch('data/tickers.json');
+    if (!tickersResp.ok) throw new Error('No tickers file');
+    const tickers: string[] = await tickersResp.json();
+    
+    if (tickers.length === 0) {
+      throw new Error('No tickers found');
+    }
+    
+    setStatus(`Loading ${tickers.length} tickers...`);
+    
+    // 2. 각 티커별 데이터 및 이벤트 로드
+    const map = new Map<string, { color?: string; datas: ChartData[] }>();
+    const allEvents: EventMarker[] = [];
+    const eventSet = new Set<string>(); // 중복 제거용
+    
+    const loadPromises = tickers.map(async (ticker) => {
+      try {
+        // 데이터 로드
+        const dataResp = await fetch(`data/${ticker}.json`);
+        if (!dataResp.ok) {
+          console.warn(`Failed to load ${ticker}.json`);
+          return;
+        }
+        const data = await dataResp.json() as ChartData[];
+        const fData = data.filter(it => it.close !== null || it.open !== null);
+        map.set(ticker, { datas: fData });
+        
+        // 이벤트 로드
+        try {
+          const eventsResp = await fetch(`data/${ticker}_events.json`);
+          if (eventsResp.ok) {
+            const tickerEvents = await eventsResp.json() as EventMarker[];
+            // 중복 제거 (timestamp + label 조합으로)
+            tickerEvents.forEach((event: EventMarker) => {
+              const key = `${event.timestamp}_${event.label}`;
+              if (!eventSet.has(key)) {
+                eventSet.add(key);
+                allEvents.push(event);
+              }
+            });
+          }
+        } catch (err) {
+          console.warn(`No events file for ${ticker}`);
+        }
+      } catch (err) {
+        console.warn(`Error loading ${ticker}:`, err);
+      }
     });
-    const events: EventMarker[] = json.events || [];
-    setStatus('Loaded chart-data.json');
+    
+    await Promise.all(loadPromises);
+    
+    const events = allEvents;
+    
+    setStatus(`Loaded ${map.size} tickers, ${events.length} events`);
     return { dataMap: map, events };
   } catch (err) {
-    setStatus('Using sample data (place data/chart-data.json to override)');
+    setStatus('Using sample data (place data files to override)');
     return makeSampleData();
   }
 }
 
-let currentData: { dataMap: Map<string, ChartData[]>; events: EventMarker[] } | null = null;
+let currentData: { dataMap: Map<string, { color?: string; datas: ChartData[] }>; events: EventMarker[] } | null = null;
 let overlayChart: OverlayStockChart | null = null;
 let showEvents = false;
 let showCandles = false;

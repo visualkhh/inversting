@@ -5,6 +5,7 @@ type ChartData = {
   low: number;
   close: number;
   volume?: number;
+  obv?: number;
 };
 
 interface EventMarker {
@@ -53,10 +54,32 @@ export class OverlayStockChart {
   private width: number;
   private height: number;
   private padding = 50;
-  private colors = ['#0000FF', '#FF0000', '#00AA00', '#FF00FF'];
+  private colors = [
+    '#0000FF', // Blue
+    '#FF0000', // Red
+    '#00AA00', // Green
+    '#FF00FF', // Magenta
+    '#FF8C00', // Dark Orange
+    '#8B00FF', // Violet
+    '#00CED1', // Dark Turquoise
+    '#FF1493', // Deep Pink
+    '#32CD32', // Lime Green
+    '#FFD700', // Gold
+    '#4169E1', // Royal Blue
+    '#DC143C', // Crimson
+    '#00FA9A', // Medium Spring Green
+    '#FF69B4', // Hot Pink
+    '#1E90FF', // Dodger Blue
+    '#FF4500', // Orange Red
+    '#9370DB', // Medium Purple
+    '#00BFFF', // Deep Sky Blue
+    '#FF6347', // Tomato
+    '#48D1CC'  // Medium Turquoise
+  ];
   private chartMargin = 0.1;
-  private dataMap: Map<string, ChartData[]>;
+  private dataMap: Map<string, { color?: string; datas: ChartData[] }>;
   private events: EventMarker[];
+  private tickerColors: Map<string, string> = new Map();
   
   // 내부 상태
   private state: RenderState;
@@ -84,10 +107,15 @@ export class OverlayStockChart {
   private isTouchDragging = false;
   private isTouchPanning = false;
   private resizeObserver: ResizeObserver | null = null;
+  
+  // 더블탭 감지
+  private lastTapTime = 0;
+  private lastTapX = 0;
+  private lastTapY = 0;
 
   constructor(
     canvas: HTMLCanvasElement,
-    dataMap: Map<string, ChartData[]>,
+    dataMap: Map<string, { color?: string; datas: ChartData[] }>,
     events: EventMarker[] = [],
     initialState: RenderState
   ) {
@@ -98,6 +126,14 @@ export class OverlayStockChart {
     this.dataMap = dataMap;
     this.events = events;
     this.state = initialState;
+    
+    // 티커별 색상 초기화
+    let colorIndex = 0;
+    dataMap.forEach((value, symbol) => {
+      const color = value.color || this.colors[colorIndex % this.colors.length];
+      this.tickerColors.set(symbol, color);
+      colorIndex++;
+    });
     
     this.setupEventListeners();
     this.setupResizeObserver();
@@ -118,9 +154,18 @@ export class OverlayStockChart {
     this.resizeObserver.observe(this.canvas);
   }
 
-  setData(dataMap: Map<string, ChartData[]>, events: EventMarker[] = []) {
+  setData(dataMap: Map<string, { color?: string; datas: ChartData[] }>, events: EventMarker[] = []) {
     this.dataMap = dataMap;
     this.events = events;
+    
+    // 티커별 색상 재초기화
+    this.tickerColors.clear();
+    let colorIndex = 0;
+    dataMap.forEach((value, symbol) => {
+      const color = value.color || this.colors[colorIndex % this.colors.length];
+      this.tickerColors.set(symbol, color);
+      colorIndex++;
+    });
   }
 
   updateState(partialState: Partial<RenderState>) {
@@ -136,33 +181,17 @@ export class OverlayStockChart {
     return this.sortedTimes;
   }
 
-  private calculateOBV(data: ChartData[]): number[] {
-    const obv: number[] = [];
-    let cumulative = 0;
-    
-    for (let i = 0; i < data.length; i++) {
-      const d = data[i];
-      const volume = d.volume || 0;
-      
-      if (i === 0) {
-        cumulative = volume;
-      } else {
-        const prev = data[i - 1];
-        if (d.close > prev.close) {
-          cumulative += volume;
-        } else if (d.close < prev.close) {
-          cumulative -= volume;
-        }
-      }
-      obv.push(cumulative);
-    }
-    
-    return obv;
+  private getTickerColor(symbol: string): string {
+    return this.tickerColors.get(symbol) || this.colors[0];
   }
+
+
 
   private getX(time: number, minTime: number, maxTime: number): number {
     const timeRange = maxTime - minTime || 1;
-    return this.padding + ((time - minTime) / timeRange) * (this.width - this.padding * 2);
+    const chartWidth = this.width - this.padding * 2;
+    const normalizedTime = (time - minTime) / timeRange;
+    return this.padding + normalizedTime * chartWidth;
   }
 
   private getY(value: number, minVal: number, maxVal: number, topY: number, height: number): number {
@@ -193,9 +222,9 @@ export class OverlayStockChart {
     const allTimePoints = new Set<number>();
     const dataBySymbol = new Map<string, { time: number; open: number; high: number; low: number; close: number }[]>();
 
-    this.dataMap.forEach((data, symbol) => {
+    this.dataMap.forEach((value, symbol) => {
       const points: { time: number; open: number; high: number; low: number; close: number }[] = [];
-      data.forEach(d => {
+      value.datas.forEach(d => {
         const time = new Date(d.timestamp).getTime() / 1000;
         allTimePoints.add(time);
         if (d.close && d.close > 0) {
@@ -254,14 +283,12 @@ export class OverlayStockChart {
     this.drawYAxisTitle('Price', graphTop, graphBottom);
 
     // 심볼별 렌더링
-    let colorIndex = 0;
     dataBySymbol.forEach((points, symbol) => {
       if (!visibleTickers.has(symbol)) {
-        colorIndex++;
         return;
       }
 
-      const color = this.colors[colorIndex % this.colors.length];
+      const color = this.getTickerColor(symbol);
       const minMax = minMaxBySymbol.get(symbol)!;
       const sortedPoints = points.sort((a, b) => a.time - b.time);
 
@@ -274,8 +301,6 @@ export class OverlayStockChart {
       if (!hideLines) {
         this.drawLine(sortedPoints, minMax, color, minTime, maxTime, timeRange, sortedTimes.length, graphTop, graphHeight, fillGaps, smoothMode);
       }
-
-      colorIndex++;
     });
 
     // 평균선
@@ -365,6 +390,8 @@ export class OverlayStockChart {
     topY: number,
     height: number
   ) {
+    if (points.length === 0) return;
+    
     this.ctx.save();
     this.ctx.beginPath();
     this.ctx.rect(this.padding, topY, this.width - this.padding * 2, height);
@@ -413,6 +440,8 @@ export class OverlayStockChart {
     fillGaps: boolean,
     smoothMode: string
   ) {
+    if (points.length === 0) return;
+    
     this.ctx.save();
     this.ctx.beginPath();
     this.ctx.rect(this.padding, topY, this.width - this.padding * 2, height);
@@ -649,8 +678,8 @@ export class OverlayStockChart {
 
     // 각 티커별 볼륨 min/max 계산
     const volumeMinMaxBySymbol = new Map<string, { min: number; max: number }>();
-    this.dataMap.forEach((data, symbol) => {
-      const volumes = data.map(d => d.volume || 0).filter(v => v > 0);
+    this.dataMap.forEach((value, symbol) => {
+      const volumes = value.datas.map(d => d.volume || 0).filter(v => v > 0);
       if (volumes.length > 0) {
         volumeMinMaxBySymbol.set(symbol, {
           min: Math.min(...volumes),
@@ -660,13 +689,14 @@ export class OverlayStockChart {
     });
 
     // Volume 렌더링
-    let colorIndex = 0;
-    this.dataMap.forEach((data, symbol) => {
+    this.dataMap.forEach((value, symbol) => {
       const minMax = volumeMinMaxBySymbol.get(symbol);
       if (!minMax || !visibleTickers.has(symbol)) {
-        colorIndex++;
         return;
       }
+
+      const data = value.datas;
+      const color = this.getTickerColor(symbol);
 
       if (!hideLines) {
         this.ctx.save();
@@ -674,7 +704,7 @@ export class OverlayStockChart {
         this.ctx.rect(this.padding, volumeTopY, this.width - this.padding * 2, volumeHeight);
         this.ctx.clip();
 
-        this.ctx.strokeStyle = this.colors[colorIndex % this.colors.length];
+        this.ctx.strokeStyle = color;
         this.ctx.lineWidth = 1;
         this.ctx.lineJoin = 'round';
         this.ctx.lineCap = 'round';
@@ -757,7 +787,6 @@ export class OverlayStockChart {
         this.ctx.setLineDash([]);
         this.ctx.restore();
       }
-      colorIndex++;
     });
 
     // Y축 레이블
@@ -788,10 +817,11 @@ export class OverlayStockChart {
     sortedTimes.forEach(time => {
       const yValues: number[] = [];
 
-      this.dataMap.forEach((data, symbol) => {
+      this.dataMap.forEach((value, symbol) => {
         const minMax = minMaxBySymbol.get(symbol);
         if (!minMax) return;
 
+        const data = value.datas;
         let volumeValue: number | null = null;
         const exactData = data.find(d => new Date(d.timestamp).getTime() / 1000 === time);
         
@@ -920,8 +950,9 @@ export class OverlayStockChart {
 
     // 각 티커별 OBV min/max 계산
     const obvMinMaxBySymbol = new Map<string, { min: number; max: number; values: number[] }>();
-    this.dataMap.forEach((data, symbol) => {
-      const obvValues = this.calculateOBV(data);
+    this.dataMap.forEach((value, symbol) => {
+      const obvValues = value.datas.map(d => d.obv || 0);
+      
       if (obvValues.length > 0) {
         obvMinMaxBySymbol.set(symbol, {
           min: Math.min(...obvValues),
@@ -932,16 +963,16 @@ export class OverlayStockChart {
     });
 
     // OBV 렌더링
-    let colorIndex = 0;
-    this.dataMap.forEach((data, symbol) => {
+    this.dataMap.forEach((value, symbol) => {
       const obvData = obvMinMaxBySymbol.get(symbol);
       if (!obvData || !visibleTickers.has(symbol)) {
-        colorIndex++;
         return;
       }
 
+      const data = value.datas;
       const obvValues = obvData.values;
       const minMax = { min: obvData.min, max: obvData.max };
+      const color = this.getTickerColor(symbol);
 
       if (!hideLines) {
         this.ctx.save();
@@ -949,7 +980,7 @@ export class OverlayStockChart {
         this.ctx.rect(this.padding, obvTopY, this.width - this.padding * 2, obvHeight);
         this.ctx.clip();
 
-        this.ctx.strokeStyle = this.colors[colorIndex % this.colors.length];
+        this.ctx.strokeStyle = color;
         this.ctx.lineWidth = 1;
         this.ctx.lineJoin = 'round';
         this.ctx.lineCap = 'round';
@@ -1032,7 +1063,6 @@ export class OverlayStockChart {
         this.ctx.setLineDash([]);
         this.ctx.restore();
       }
-      colorIndex++;
     });
 
     // Y축 레이블
@@ -1061,10 +1091,11 @@ export class OverlayStockChart {
     const obvBySymbol = new Map<string, { time: number; obv: number }[]>();
     const minMaxBySymbol = new Map<string, { min: number; max: number }>();
 
-    this.dataMap.forEach((data, symbol) => {
+    this.dataMap.forEach((value, symbol) => {
       const obvData = obvMinMaxBySymbol.get(symbol);
       if (!obvData) return;
 
+      const data = value.datas;
       const points: { time: number; obv: number }[] = [];
       data.forEach((d, i) => {
         const time = new Date(d.timestamp).getTime() / 1000;
@@ -1180,7 +1211,7 @@ export class OverlayStockChart {
     this.ctx.font = '11px Arial';
     
     dataBySymbol.forEach((_, symbol) => {
-      const color = this.colors[legendColorIndex % this.colors.length];
+      const color = this.getTickerColor(symbol);
       const isVisible = visibleTickers.has(symbol);
       const itemX = legendX + legendColorIndex * legendItemWidth;
       
@@ -1328,7 +1359,12 @@ export class OverlayStockChart {
     }
   }
 
-  drawZoomButtons(zoomStart: number, zoomEnd: number): { type: string; x: number; y: number; width: number; height: number }[] {
+  drawZoomButtons(
+    zoomStart: number, 
+    zoomEnd: number, 
+    displayMinTime?: number, 
+    displayMaxTime?: number
+  ): { type: string; x: number; y: number; width: number; height: number }[] {
     const buttonSize = 24;
     const buttonGap = 6;
     const startX = this.width - this.padding - (buttonSize * 3 + buttonGap * 2);
@@ -1363,6 +1399,32 @@ export class OverlayStockChart {
       zoomButtons.push({ type: btn.type, x, y, width: buttonSize, height: buttonSize });
     });
     
+    // 현재 보고 있는 시간 범위를 항상 버튼 위에 표시
+    if (displayMinTime !== undefined && displayMaxTime !== undefined) {
+      // 날짜 포맷 함수
+      const formatDateTime = (timestamp: number): string => {
+        const date = new Date(timestamp * 1000);
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const seconds = String(date.getSeconds()).padStart(2, '0');
+        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+      };
+      
+      const fromDate = formatDateTime(displayMinTime);
+      const toDate = formatDateTime(displayMaxTime);
+      const dateRangeText = `${fromDate} ~ ${toDate}`;
+      
+      // 날짜 범위를 버튼 위에 표시
+      this.ctx.font = '10px Arial';
+      this.ctx.fillStyle = '#333';
+      this.ctx.textAlign = 'right';
+      this.ctx.fillText(dateRangeText, startX + buttonSize * 3 + buttonGap * 2, startY - 5);
+    }
+    
+    // 줌 모드일 때 퍼센트를 버튼 아래에 표시
     if (zoomStart > 0 || zoomEnd < 100) {
       this.ctx.font = '10px Arial';
       this.ctx.fillStyle = '#666';
@@ -1445,7 +1507,13 @@ export class OverlayStockChart {
       const timeRange = maxTime - minTime || 1;
       const currentTime = minTime + timePercent * timeRange;
       const date = new Date(currentTime * 1000);
-      const dateStr = `${date.getMonth() + 1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`;
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      const seconds = String(date.getSeconds()).padStart(2, '0');
+      const dateStr = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
       
       this.ctx.fillStyle = '#333333';
       this.ctx.font = 'bold 12px Arial';
@@ -1511,7 +1579,8 @@ export class OverlayStockChart {
     const volumeMinMaxBySymbol = new Map<string, { min: number; max: number }>();
     const obvMinMaxBySymbol = new Map<string, { min: number; max: number; values: number[] }>();
 
-    this.dataMap.forEach((data, symbol) => {
+    this.dataMap.forEach((value, symbol) => {
+      const data = value.datas;
       const closes = data.map(d => d.close).filter(c => c > 0);
       if (closes.length > 0) {
         minMaxBySymbol.set(symbol, { min: Math.min(...closes), max: Math.max(...closes) });
@@ -1522,24 +1591,23 @@ export class OverlayStockChart {
         volumeMinMaxBySymbol.set(symbol, { min: Math.min(...volumes), max: Math.max(...volumes) });
       }
       
-      const obvValues = this.calculateOBV(data);
+      const obvValues = data.map(d => d.obv || 0);
       if (obvValues.length > 0) {
         obvMinMaxBySymbol.set(symbol, { min: Math.min(...obvValues), max: Math.max(...obvValues), values: obvValues });
       }
     });
 
-    let colorIndex = 0;
     const pointRadius = 2;
     const clipLeft = this.padding;
     const clipRight = this.width - this.padding;
 
-    this.dataMap.forEach((data, symbol) => {
+    this.dataMap.forEach((value, symbol) => {
       if (!visibleTickers.has(symbol)) {
-        colorIndex++;
         return;
       }
 
-      const color = this.colors[colorIndex % this.colors.length];
+      const data = value.datas;
+      const color = this.getTickerColor(symbol);
       const priceMinMax = minMaxBySymbol.get(symbol);
       const volumeMinMax = volumeMinMaxBySymbol.get(symbol);
       const obvData = obvMinMaxBySymbol.get(symbol);
@@ -1614,8 +1682,6 @@ export class OverlayStockChart {
           dataPoints.push({ symbol, x, y, value: obvValues[i], time, chartType: 'OBV' });
         });
       }
-
-      colorIndex++;
     });
     
     return dataPoints;
@@ -1994,6 +2060,18 @@ export class OverlayStockChart {
       }
     });
 
+    // 더블클릭 (PC)
+    this.canvas.addEventListener('dblclick', (e: MouseEvent) => {
+      const rect = this.canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      // 확대 상태에서 차트 영역을 더블클릭하면 초기화
+      if (this.isInChartArea(x, y) && (this.zoomStart > 0 || this.zoomEnd < 100)) {
+        this.zoomReset();
+      }
+    });
+
     // 휠
     this.canvas.addEventListener('wheel', (e: WheelEvent) => {
       const rect = this.canvas.getBoundingClientRect();
@@ -2151,6 +2229,35 @@ export class OverlayStockChart {
         } else if (selectionWidth < 10 && this.touchStartX !== null && this.touchStartY !== null) {
           const tapX = this.touchStartX;
           const tapY = this.touchStartY;
+          const currentTime = Date.now();
+          const tapThreshold = 300; // 300ms 이내
+          const distanceThreshold = 30; // 30px 이내
+          
+          // 더블탭 감지
+          const timeDiff = currentTime - this.lastTapTime;
+          const dx = tapX - this.lastTapX;
+          const dy = tapY - this.lastTapY;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          
+          if (timeDiff < tapThreshold && distance < distanceThreshold) {
+            // 더블탭 감지됨 - 확대 상태에서 차트 영역이면 초기화
+            if (this.isInChartArea(tapX, tapY) && (this.zoomStart > 0 || this.zoomEnd < 100)) {
+              this.zoomReset();
+              this.lastTapTime = 0; // 초기화
+              this.isTouchDragging = false;
+              this.isDragging = false;
+              this.dragStartX = null;
+              this.dragCurrentX = null;
+              this.touchStartX = null;
+              this.touchStartY = null;
+              return;
+            }
+          }
+          
+          // 마지막 탭 정보 저장
+          this.lastTapTime = currentTime;
+          this.lastTapX = tapX;
+          this.lastTapY = tapY;
           
           for (const btn of this.zoomButtons) {
             if (tapX >= btn.x && tapX <= btn.x + btn.width &&
@@ -2220,13 +2327,13 @@ export class OverlayStockChart {
     }, { passive: true });
   }
 
-  private groupDataByDay(dataMap: Map<string, ChartData[]>): Map<string, ChartData[]> {
-    const groupedMap = new Map<string, ChartData[]>();
+  private groupDataByDay(dataMap: Map<string, { color?: string; datas: ChartData[] }>): Map<string, { color?: string; datas: ChartData[] }> {
+    const groupedMap = new Map<string, { color?: string; datas: ChartData[] }>();
     
-    dataMap.forEach((data, symbol) => {
+    dataMap.forEach((value, symbol) => {
       const dailyMap = new Map<string, ChartData>();
       
-      data.forEach(d => {
+      value.datas.forEach(d => {
         const dateOnly = d.timestamp.split(' ')[0];
         const dayKey = `${dateOnly} 00:00:00`;
         
@@ -2254,7 +2361,7 @@ export class OverlayStockChart {
         new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
       );
       
-      groupedMap.set(symbol, groupedData);
+      groupedMap.set(symbol, { color: value.color, datas: groupedData });
     });
     
     return groupedMap;
@@ -2308,10 +2415,10 @@ export class OverlayStockChart {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     
     // 활성화된 티커만 필터링
-    let filteredDataMap = new Map<string, ChartData[]>();
-    this.dataMap.forEach((data, symbol) => {
+    let filteredDataMap = new Map<string, { color?: string; datas: ChartData[] }>();
+    this.dataMap.forEach((value, symbol) => {
       if (this.state.enabledTickers.has(symbol)) {
-        filteredDataMap.set(symbol, data);
+        filteredDataMap.set(symbol, value);
       }
     });
     
@@ -2323,8 +2430,8 @@ export class OverlayStockChart {
     // 전체 시간 범위 계산
     let globalMinTime = Infinity;
     let globalMaxTime = -Infinity;
-    filteredDataMap.forEach((data) => {
-      data.forEach(d => {
+    filteredDataMap.forEach((value) => {
+      value.datas.forEach(d => {
         const time = new Date(d.timestamp).getTime() / 1000;
         if (time < globalMinTime) globalMinTime = time;
         if (time > globalMaxTime) globalMaxTime = time;
@@ -2352,10 +2459,11 @@ export class OverlayStockChart {
     
     // 시간 기반으로 각 티커 필터링
     if (this.state.rangeMin > 0 || this.state.rangeMax < 100 || this.zoomStart > 0 || this.zoomEnd < 100) {
-      const timeFilteredMap = new Map<string, ChartData[]>();
-      filteredDataMap.forEach((data, symbol) => {
+      const timeFilteredMap = new Map<string, { color?: string; datas: ChartData[] }>();
+      filteredDataMap.forEach((value, symbol) => {
+        const data = value.datas;
         if (data.length === 0) {
-          timeFilteredMap.set(symbol, []);
+          timeFilteredMap.set(symbol, { color: value.color, datas: [] });
           return;
         }
         
@@ -2372,21 +2480,21 @@ export class OverlayStockChart {
         }
         
         if (startIdx === -1 || endIdx === -1) {
-          timeFilteredMap.set(symbol, []);
+          timeFilteredMap.set(symbol, { color: value.color, datas: [] });
           return;
         }
         
         const actualStartIdx = Math.max(0, startIdx - 1);
         const actualEndIdx = Math.min(data.length - 1, endIdx + 1);
-        timeFilteredMap.set(symbol, data.slice(actualStartIdx, actualEndIdx + 1));
+        timeFilteredMap.set(symbol, { color: value.color, datas: data.slice(actualStartIdx, actualEndIdx + 1) });
       });
       filteredDataMap = timeFilteredMap;
     }
     
     // 시간 포인트 수집
     const allTimePoints = new Set<number>();
-    filteredDataMap.forEach((data) => {
-      data.forEach(d => {
+    filteredDataMap.forEach((value) => {
+      value.datas.forEach(d => {
         const time = new Date(d.timestamp).getTime() / 1000;
         allTimePoints.add(time);
       });
@@ -2462,7 +2570,7 @@ export class OverlayStockChart {
     }
 
     // 줌 버튼 그리기
-    this.zoomButtons = this.drawZoomButtons(this.zoomStart, this.zoomEnd);
+    this.zoomButtons = this.drawZoomButtons(this.zoomStart, this.zoomEnd, displayMinTime, displayMaxTime);
 
     // 드래그 선택 영역 그리기
     this.drawDragSelection(this.isDragging, this.dragStartX, this.dragCurrentX, chartBottom);
