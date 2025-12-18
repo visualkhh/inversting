@@ -3,9 +3,9 @@ import { OverlayStockChart, type EventMarker } from './OverlayStockChart';
 // 새로운 ChartData 타입 (OverlayStockChart에서 사용)
 type ChartData = {
   x: number;
-  yOpen?: number;
-  yHigh?: number;
-  yLow?: number;
+  yOpen?: number | null;
+  yHigh?: number | null;
+  yLow?: number | null;
   y: number;
 };
 
@@ -68,9 +68,9 @@ function convertToNewFormat(oldData: OldChartData[]): { [key: string]: ChartData
     if (d.close !== null && d.close !== undefined) {
       result.price.push({
         x: timestamp,
-        yOpen: d.open ?? 0,
-        yHigh: d.high ?? d.close,
-        yLow: d.low ?? d.close,
+        yOpen: d.open,
+        yHigh: d.high,
+        yLow: d.low,
         y: d.close
       });
     }
@@ -79,9 +79,9 @@ function convertToNewFormat(oldData: OldChartData[]): { [key: string]: ChartData
     if (d.volume !== null && d.volume !== undefined) {
       result.volume.push({
         x: timestamp,
-        yOpen: d.volume-(d.volume/6),
-        yHigh: d.volume+(d.volume/6),
-        yLow: d.volume-(d.volume/6),
+        // yOpen: d.volume-(d.volume/6),
+        // yHigh: d.volume+(d.volume/6),
+        // yLow: d.volume-(d.volume/6),
         y: d.volume
       });
     }
@@ -90,9 +90,9 @@ function convertToNewFormat(oldData: OldChartData[]): { [key: string]: ChartData
     if (d.obv !== null && d.obv !== undefined) {
       result.obv.push({
         x: timestamp,
-        yOpen: d.obv-(d.obv/6),
-        yHigh: d.obv+(d.obv/6),
-        yLow: d.obv-(d.obv/6),
+        // yOpen: d.obv-(d.obv/6),
+        // yHigh: d.obv+(d.obv/6),
+        // yLow: d.obv-(d.obv/6),
         y: d.obv
       });
     }
@@ -284,6 +284,10 @@ let rangeMax = 100;
       rangeMax
     },
     {
+      paddingLeft: 100,
+      paddingRight: 300,
+      paddingTop: 100,
+      paddingBottom: 100,
       xFormat: (xValue: number) => {
         const date = new Date(xValue * 1000);
         const year = date.getFullYear();
@@ -294,9 +298,16 @@ let rangeMax = 100;
         const seconds = String(date.getSeconds()).padStart(2, '0');
         return `${year}-${month}-${day}`;
       },
-      yFormat: (yValue: number) => {
-        return yValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
-      },
+      // yFormat: (yValue: number) => {
+      //   if (overlayChart?.getState()?.normalize) {
+      //     return yValue.toLocaleString(undefined, {maximumFractionDigits: 2});
+      //   } else {
+      //     return {font:'6px Arial', value: yValue.toLocaleString(undefined, {maximumFractionDigits: 2})};
+      //   }
+      // },
+      // tooltipLabelFormat: (chartKey: string) => {
+      //   return 'zzzzz'
+      // },
       crosshairYFormat: (yValue: number, chartKey: string) => {
         return yValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
       },

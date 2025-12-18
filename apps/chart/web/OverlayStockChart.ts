@@ -1,8 +1,8 @@
 type ChartData = {
   x: number;
-  yOpen?: number;
-  yHigh?: number;
-  yLow?: number;
+  yOpen?: number | null;
+  yHigh?: number | null;
+  yLow?: number | null;
   y: number;
 };
 
@@ -27,12 +27,49 @@ interface ChartOptions {
   displayMaxTime?: number;
 }
 
+interface FormatResult {
+  value: string;
+  font?: string;
+  fillStyle?: string;
+  textAlign?: CanvasTextAlign;
+  textBaseline?: CanvasTextBaseline;
+}
+
+type FormatReturn = string | FormatResult;
+
 interface ChartConfig {
-  xFormat?: (xValue: number) => string;
-  yFormat?: (yValue: number) => string;
-  labelFormat?: (chartKey: string) => string; // 차트 키별 Y축 레이블 콜백
-  crosshairXFormat?: (xValue: number) => string; // 크로스헤어 X축 값 포맷
-  crosshairYFormat?: (yValue: number, chartKey: string) => string; // 크로스헤어 Y축 값 포맷
+  xFormat?: (xValue: number, chartKey?: string) => FormatReturn; // X축 레이블 포맷
+  yFormat?: (yValue: number, chartKey?: string) => FormatReturn; // Y축 레이블 포맷
+  labelFormat?: (chartKey: string) => FormatReturn; // 차트 키별 Y축 타이틀 포맷
+  crosshairXFormat?: (xValue: number) => FormatReturn; // 크로스헤어 X축 값 포맷
+  crosshairYFormat?: (yValue: number, chartKey: string, isNormalized: boolean) => FormatReturn; // 크로스헤어 Y축 값 포맷
+  tooltipLabelFormat?: (symbol: string, chartKey: string, value: number, time: number) => FormatReturn; // 툴팁 메인 텍스트 포맷 (전체)
+  tooltipXFormat?: (xValue: number, symbol: string, chartKey: string) => FormatReturn; // 툴팁 서브 텍스트 포맷
+  tooltipYFormat?: (yValue: number, chartKey: string, symbol: string) => FormatReturn; // 툴팁 Y축 값 포맷 (tooltipLabelFormat 없을 때)
+  
+  // 스타일 설정
+  lineStrokeStyle?: string | ((symbol: string, chartKey: string) => string); // 라인 그래프 색상
+  lineWidth?: number | ((symbol: string, chartKey: string) => number); // 라인 두께
+  averageStrokeStyle?: string; // 평균선 색상
+  averageLineWidth?: number; // 평균선 두께
+  averageLineDash?: number[]; // 평균선 대시 패턴
+  crosshairStrokeStyle?: string; // 크로스헤어 색상
+  crosshairLineWidth?: number; // 크로스헤어 두께
+  crosshairLineDash?: number[]; // 크로스헤어 대시 패턴
+  candleUpColor?: string | ((symbol: string, chartKey: string) => string); // 상승 캔들 색상
+  candleDownColor?: string | ((symbol: string, chartKey: string) => string); // 하락 캔들 색상
+  candleBorderColor?: string | ((symbol: string, chartKey: string) => string); // 캔들 테두리 색상
+  gridStrokeStyle?: string; // 그리드 색상
+  gridLineWidth?: number; // 그리드 두께
+  
+  // 레이아웃 설정
+  paddingLeft?: number; // 왼쪽 여백 (Y축 레이블 영역)
+  paddingRight?: number; // 오른쪽 여백
+  paddingTop?: number; // 위쪽 여백
+  paddingBottom?: number; // 아래쪽 여백 (X축 레이블 영역)
+  
+  // 콜백
+  onLegendClick?: (symbol: string, isVisible: boolean) => void; // 범례 클릭 콜백
 }
 
 interface RenderState {
@@ -59,7 +96,13 @@ export class OverlayStockChart {
   private canvas: HTMLCanvasElement;
   private width: number;
   private height: number;
-  private padding = 50;
+  private padding = 50; // 기본값, config로 오버라이드 가능
+  private paddingLeft = 50;
+  private paddingRight = 50;
+  private paddingTop = 50;
+  private paddingBottom = 50;
+  private chartAreaWidth = 0; // 실제 차트 그리는 영역의 고정 너비
+  private chartAreaLeft = 50; // 차트 영역 시작 X 좌표
   private colors = [
     '#0000FF', // Blue
     '#FF0000', // Red
@@ -135,6 +178,17 @@ export class OverlayStockChart {
     this.commonEvents = commonEvents;
     this.state = initialState;
     this.config = config || {};
+    
+    // padding 설정
+    this.paddingLeft = this.config.paddingLeft ?? 50;
+    this.paddingRight = this.config.paddingRight ?? 50;
+    this.paddingTop = this.config.paddingTop ?? 50;
+    this.paddingBottom = this.config.paddingBottom ?? 50;
+    this.padding = 50; // 기본 padding (차트 영역 계산용)
+    
+    // 차트 영역은 기본 padding 기준으로 고정
+    this.chartAreaLeft = this.padding;
+    this.chartAreaWidth = 0; // render에서 계산됨
     
     // visibleChartKeys가 비어있으면 첫 번째 티커의 첫 번째 키를 기본값으로
     if (!this.state.visibleChartKeys || this.state.visibleChartKeys.length === 0) {
@@ -212,13 +266,33 @@ export class OverlayStockChart {
     return this.tickerColors.get(symbol) || this.colors[0];
   }
 
+  private applyFormatResult(result: FormatReturn): string {
+    if (typeof result === 'string') {
+      return result;
+    }
+    
+    // 스타일 적용
+    if (result.font) this.ctx.font = result.font;
+    if (result.fillStyle) this.ctx.fillStyle = result.fillStyle;
+    if (result.textAlign) this.ctx.textAlign = result.textAlign;
+    if (result.textBaseline) this.ctx.textBaseline = result.textBaseline;
+    
+    return result.value;
+  }
+
+  private getChartRight(): number {
+    return this.chartAreaLeft + this.chartAreaWidth;
+  }
+
 
 
   private getX(time: number, minTime: number, maxTime: number): number {
     const timeRange = maxTime - minTime || 1;
-    const chartWidth = this.width - this.padding * 2;
+    // 차트 영역 너비는 고정 (기본 padding 기준)
+    const chartWidth = this.chartAreaWidth;
     const normalizedTime = (time - minTime) / timeRange;
-    return this.padding + normalizedTime * chartWidth;
+    // 차트 시작 위치는 paddingLeft 사용
+    return this.paddingLeft + normalizedTime * chartWidth;
   }
 
   private getY(value: number, minVal: number, maxVal: number, topY: number, height: number): number {
@@ -258,12 +332,17 @@ export class OverlayStockChart {
       const chartData = value.data[chartKey] || [];
       chartData.forEach(d => {
         const time = d.x;
-        if (d.y && d.y > 0) {
+        if (d.y !== null && d.y !== undefined) {
+          // yOpen, yHigh, yLow가 모두 유효한 경우에만 OHLC 데이터로 추가
+          const hasOHLC = d.yOpen !== null && d.yOpen !== undefined &&
+                          d.yHigh !== null && d.yHigh !== undefined &&
+                          d.yLow !== null && d.yLow !== undefined;
+          
           points.push({
             time,
-            open: d.yOpen ?? 0,
-            high: d.yHigh ?? d.y,
-            low: d.yLow ?? d.y,
+            open: hasOHLC ? d.yOpen! : d.y,
+            high: hasOHLC ? d.yHigh! : d.y,
+            low: hasOHLC ? d.yLow! : d.y,
             close: d.y
           });
         }
@@ -335,11 +414,12 @@ export class OverlayStockChart {
         globalMin = Math.min(globalMin, minMax.min);
         globalMax = Math.max(globalMax, minMax.max);
       });
-      this.drawYAxisLabels(graphTop, graphHeight, graphBottom, globalMin, globalMax);
+      this.drawYAxisLabels(graphTop, graphHeight, graphBottom, globalMin, globalMax, chartKey);
     }
 
     // Y축 타이틀
-    const yAxisLabel = this.config.labelFormat ? this.config.labelFormat(chartKey) : chartKey;
+    const labelFormatted = this.config.labelFormat ? this.config.labelFormat(chartKey) : chartKey;
+    const yAxisLabel = this.applyFormatResult(labelFormatted);
     this.drawYAxisTitle(yAxisLabel, graphTop, graphBottom);
 
     // 심볼별 렌더링
@@ -354,12 +434,12 @@ export class OverlayStockChart {
 
       // 캔들
       if (showCandles) {
-        this.drawCandles(sortedPoints, minMax, color, minTime, maxTime, graphTop, graphHeight);
+        this.drawCandles(sortedPoints, minMax, color, minTime, maxTime, graphTop, graphHeight, symbol, chartKey);
       }
 
       // 라인
       if (!hideLines) {
-        this.drawLine(sortedPoints, minMax, color, minTime, maxTime, timeRange, sortedTimes.length, graphTop, graphHeight, fillGaps, smoothMode);
+        this.drawLine(sortedPoints, minMax, color, minTime, maxTime, timeRange, sortedTimes.length, graphTop, graphHeight, fillGaps, smoothMode, symbol, chartKey);
       }
     });
 
@@ -373,15 +453,15 @@ export class OverlayStockChart {
 
   private drawGrid(topY: number, height: number) {
     const gridDivisions = 10;
-    const gridWidth = this.width - this.padding * 2;
+    const gridWidth = this.chartAreaWidth;
     const gridStepX = gridWidth / gridDivisions;
     const gridStepY = height / gridDivisions;
     
-    this.ctx.strokeStyle = '#CCCCCC';
-    this.ctx.lineWidth = 1;
+    this.ctx.strokeStyle = this.config.gridStrokeStyle || '#CCCCCC';
+    this.ctx.lineWidth = this.config.gridLineWidth || 1;
     
     for (let i = 0; i <= gridDivisions; i++) {
-      const x = this.padding + gridStepX * i;
+      const x = this.chartAreaLeft + gridStepX * i;
       this.ctx.beginPath();
       this.ctx.moveTo(x, topY);
       this.ctx.lineTo(x, topY + height);
@@ -391,8 +471,8 @@ export class OverlayStockChart {
     for (let i = 0; i <= gridDivisions; i++) {
       const y = topY + gridStepY * i;
       this.ctx.beginPath();
-      this.ctx.moveTo(this.padding, y);
-      this.ctx.lineTo(this.width - this.padding, y);
+      this.ctx.moveTo(this.chartAreaLeft, y);
+      this.ctx.lineTo(this.getChartRight(), y);
       this.ctx.stroke();
     }
   }
@@ -401,12 +481,12 @@ export class OverlayStockChart {
     this.ctx.strokeStyle = '#000000';
     this.ctx.lineWidth = 2;
     this.ctx.beginPath();
-    this.ctx.moveTo(this.padding, topY);
-    this.ctx.lineTo(this.padding, bottomY);
+    this.ctx.moveTo(this.paddingLeft, topY);
+    this.ctx.lineTo(this.paddingLeft, bottomY);
     this.ctx.stroke();
   }
 
-  private drawYAxisLabels(topY: number, height: number, bottomY: number, minValue?: number, maxValue?: number) {
+  private drawYAxisLabels(topY: number, height: number, bottomY: number, minValue?: number, maxValue?: number, chartKey?: string) {
     this.ctx.fillStyle = '#000000';
     this.ctx.font = '12px Arial';
     this.ctx.textAlign = 'right';
@@ -427,14 +507,15 @@ export class OverlayStockChart {
       } else {
         // 비정규화 모드: 실제 값 표시
         const actualValue = minValue + normalizedValue * (maxValue - minValue);
-        labelText = this.config.yFormat ? this.config.yFormat(actualValue) : actualValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+        const formatted = this.config.yFormat ? this.config.yFormat(actualValue, chartKey) : actualValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+        labelText = this.applyFormatResult(formatted);
       }
       
-      this.ctx.fillText(labelText, this.padding - 5, y);
+      this.ctx.fillText(labelText, this.paddingLeft - 5, y);
       
       this.ctx.beginPath();
-      this.ctx.moveTo(this.padding - 5, y);
-      this.ctx.lineTo(this.padding, y);
+      this.ctx.moveTo(this.paddingLeft - 5, y);
+      this.ctx.lineTo(this.paddingLeft, y);
       this.ctx.stroke();
     }
   }
@@ -442,7 +523,9 @@ export class OverlayStockChart {
   private drawYAxisTitle(title: string, topY: number, bottomY: number) {
     this.ctx.save();
     const labelY = (topY + bottomY) / 2;
-    this.ctx.translate(8, labelY);
+    // paddingLeft가 작을 때는 타이틀을 왼쪽 끝에, 클 때는 적절한 위치에
+    const titleX = Math.min(this.paddingLeft / 2, 8);
+    this.ctx.translate(titleX, labelY);
     this.ctx.rotate(-Math.PI / 2);
     this.ctx.fillStyle = '#000000';
     this.ctx.font = 'bold 14px Arial';
@@ -459,13 +542,15 @@ export class OverlayStockChart {
     minTime: number,
     maxTime: number,
     topY: number,
-    height: number
+    height: number,
+    symbol?: string,
+    chartKey?: string
   ) {
     if (points.length === 0) return;
     
     this.ctx.save();
     this.ctx.beginPath();
-    this.ctx.rect(this.padding, topY, this.width - this.padding * 2, height);
+    this.ctx.rect(this.chartAreaLeft, topY, this.chartAreaWidth, height);
     this.ctx.clip();
     
     points.forEach(point => {
@@ -475,9 +560,34 @@ export class OverlayStockChart {
       const yOpen = this.getY(point.open, minMax.min, minMax.max, topY, height);
       const yClose = this.getY(point.close, minMax.min, minMax.max, topY, height);
 
+      const isUp = point.close >= point.open;
+      
+      // 캔들 색상 결정
+      let upColor = color;
+      let downColor = color;
+      let borderColor = color;
+      
+      if (symbol && chartKey) {
+        if (this.config.candleUpColor) {
+          upColor = typeof this.config.candleUpColor === 'function' 
+            ? this.config.candleUpColor(symbol, chartKey) 
+            : this.config.candleUpColor;
+        }
+        if (this.config.candleDownColor) {
+          downColor = typeof this.config.candleDownColor === 'function' 
+            ? this.config.candleDownColor(symbol, chartKey) 
+            : this.config.candleDownColor;
+        }
+        if (this.config.candleBorderColor) {
+          borderColor = typeof this.config.candleBorderColor === 'function' 
+            ? this.config.candleBorderColor(symbol, chartKey) 
+            : this.config.candleBorderColor;
+        }
+      }
+
       // High-Low 라인
       this.ctx.globalAlpha = 0.3;
-      this.ctx.strokeStyle = color;
+      this.ctx.strokeStyle = borderColor;
       this.ctx.lineWidth = 1;
       this.ctx.beginPath();
       this.ctx.moveTo(x, yHigh);
@@ -486,9 +596,8 @@ export class OverlayStockChart {
 
       // Open-Close 캔들 바디
       const candleWidth = 3;
-      const isUp = point.close >= point.open;
-      this.ctx.strokeStyle = color;
-      this.ctx.fillStyle = isUp ? '#FFFFFF' : color;
+      this.ctx.strokeStyle = borderColor;
+      this.ctx.fillStyle = isUp ? upColor : downColor;
       
       const rectY = Math.min(yOpen, yClose);
       const rectHeight = Math.max(Math.abs(yOpen - yClose), 1);
@@ -511,17 +620,36 @@ export class OverlayStockChart {
     topY: number,
     height: number,
     fillGaps: boolean,
-    smoothMode: string
+    smoothMode: string,
+    symbol?: string,
+    chartKey?: string
   ) {
     if (points.length === 0) return;
     
     this.ctx.save();
     this.ctx.beginPath();
-    this.ctx.rect(this.padding, topY, this.width - this.padding * 2, height);
+    this.ctx.rect(this.chartAreaLeft, topY, this.chartAreaWidth, height);
     this.ctx.clip();
     
-    this.ctx.strokeStyle = color;
-    this.ctx.lineWidth = 1;
+    // 라인 스타일 적용
+    let lineColor = color;
+    let lineWidth = 1;
+    
+    if (symbol && chartKey) {
+      if (this.config.lineStrokeStyle) {
+        lineColor = typeof this.config.lineStrokeStyle === 'function'
+          ? this.config.lineStrokeStyle(symbol, chartKey)
+          : this.config.lineStrokeStyle;
+      }
+      if (this.config.lineWidth) {
+        lineWidth = typeof this.config.lineWidth === 'function'
+          ? this.config.lineWidth(symbol, chartKey)
+          : this.config.lineWidth;
+      }
+    }
+    
+    this.ctx.strokeStyle = lineColor;
+    this.ctx.lineWidth = lineWidth;
     this.ctx.lineJoin = 'round';
     this.ctx.lineCap = 'round';
     this.ctx.beginPath();
@@ -669,12 +797,12 @@ export class OverlayStockChart {
     if (avgPoints.length > 0) {
       this.ctx.save();
       this.ctx.beginPath();
-      this.ctx.rect(this.padding, topY, this.width - this.padding * 2, height);
+      this.ctx.rect(this.chartAreaLeft, topY, this.chartAreaWidth, height);
       this.ctx.clip();
       
-      this.ctx.strokeStyle = '#000000';
-      this.ctx.lineWidth = 2;
-      this.ctx.setLineDash([3, 2]);
+      this.ctx.strokeStyle = this.config.averageStrokeStyle || '#000000';
+      this.ctx.lineWidth = this.config.averageLineWidth || 2;
+      this.ctx.setLineDash(this.config.averageLineDash || [3, 2]);
       this.ctx.globalAlpha = 1.0;
       
       this.ctx.beginPath();
@@ -746,8 +874,8 @@ export class OverlayStockChart {
     this.ctx.strokeStyle = '#000000';
     this.ctx.lineWidth = 2;
     this.ctx.beginPath();
-    this.ctx.moveTo(this.padding, volumeTopY + volumeHeight);
-    this.ctx.lineTo(this.width - this.padding, volumeTopY + volumeHeight);
+    this.ctx.moveTo(this.chartAreaLeft, volumeTopY + volumeHeight);
+    this.ctx.lineTo(this.getChartRight(), volumeTopY + volumeHeight);
     this.ctx.stroke();
 
     // 각 티커별 볼륨 min/max 계산
@@ -757,7 +885,7 @@ export class OverlayStockChart {
       // 정규화: 각 티커별로 min/max 계산
       this.dataMap.forEach((value, symbol) => {
         const volumeData = value.data['volume'] || [];
-        const volumes = volumeData.map(d => d.y || 0).filter(v => v > 0);
+        const volumes = volumeData.map(d => d.y).filter(v => v !== null && v !== undefined);
         if (volumes.length > 0) {
           volumeMinMaxBySymbol.set(symbol, {
             min: Math.min(...volumes),
@@ -772,7 +900,7 @@ export class OverlayStockChart {
       
       this.dataMap.forEach((value) => {
         const volumeData = value.data['volume'] || [];
-        const volumes = volumeData.map(d => d.y || 0).filter(v => v > 0);
+        const volumes = volumeData.map(d => d.y).filter(v => v !== null && v !== undefined);
         if (volumes.length > 0) {
           globalMin = Math.min(globalMin, ...volumes);
           globalMax = Math.max(globalMax, ...volumes);
@@ -802,23 +930,32 @@ export class OverlayStockChart {
       if (showCandles) {
         const candlePoints: { time: number; open: number; high: number; low: number; close: number }[] = [];
         data.forEach(d => {
-          if (d.y && d.y > 0) {
-            candlePoints.push({
-              time: d.x,
-              open: d.yOpen ?? d.y,
-              high: d.yHigh ?? d.y,
-              low: d.yLow ?? d.y,
-              close: d.y
-            });
+          if (d.y !== null && d.y !== undefined) {
+            // yOpen, yHigh, yLow가 모두 유효한 경우에만 캔들 포인트 추가
+            const hasOHLC = d.yOpen !== null && d.yOpen !== undefined &&
+                            d.yHigh !== null && d.yHigh !== undefined &&
+                            d.yLow !== null && d.yLow !== undefined;
+            
+            if (hasOHLC) {
+              candlePoints.push({
+                time: d.x,
+                open: d.yOpen!,
+                high: d.yHigh!,
+                low: d.yLow!,
+                close: d.y
+              });
+            }
           }
         });
-        this.drawCandles(candlePoints, minMax, color, minTime, maxTime, volumeTopY, volumeHeight);
+        if (candlePoints.length > 0) {
+          this.drawCandles(candlePoints, minMax, color, minTime, maxTime, volumeTopY, volumeHeight);
+        }
       }
 
       if (!hideLines) {
         this.ctx.save();
         this.ctx.beginPath();
-        this.ctx.rect(this.padding, volumeTopY, this.width - this.padding * 2, volumeHeight);
+        this.ctx.rect(this.chartAreaLeft, volumeTopY, this.chartAreaWidth, volumeHeight);
         this.ctx.clip();
 
         this.ctx.strokeStyle = color;
@@ -915,7 +1052,7 @@ export class OverlayStockChart {
         globalMin = Math.min(globalMin, minMax.min);
         globalMax = Math.max(globalMax, minMax.max);
       });
-      this.drawYAxisLabels(volumeTopY, volumeHeight, volumeTopY + volumeHeight, globalMin, globalMax);
+      this.drawYAxisLabels(volumeTopY, volumeHeight, volumeTopY + volumeHeight, globalMin, globalMax, 'volume');
     }
 
     // 'Volume' 세로 텍스트
@@ -977,7 +1114,7 @@ export class OverlayStockChart {
           }
         }
 
-        if (volumeValue !== null && volumeValue > 0) {
+        if (volumeValue !== null && volumeValue !== undefined) {
           const yCoord = this.getY(volumeValue, minMax.min, minMax.max, topY, height);
           yValues.push(yCoord);
         }
@@ -992,7 +1129,7 @@ export class OverlayStockChart {
     if (avgPoints.length > 0) {
       this.ctx.save();
       this.ctx.beginPath();
-      this.ctx.rect(this.padding, topY, this.width - this.padding * 2, height);
+      this.ctx.rect(this.chartAreaLeft, topY, this.chartAreaWidth, height);
       this.ctx.clip();
 
       this.ctx.strokeStyle = '#000000';
@@ -1069,8 +1206,8 @@ export class OverlayStockChart {
     this.ctx.strokeStyle = '#000000';
     this.ctx.lineWidth = 2;
     this.ctx.beginPath();
-    this.ctx.moveTo(this.padding, obvTopY + obvHeight);
-    this.ctx.lineTo(this.width - this.padding, obvTopY + obvHeight);
+    this.ctx.moveTo(this.chartAreaLeft, obvTopY + obvHeight);
+    this.ctx.lineTo(this.getChartRight(), obvTopY + obvHeight);
     this.ctx.stroke();
 
     // 각 티커별 OBV min/max 계산
@@ -1080,7 +1217,7 @@ export class OverlayStockChart {
       // 정규화: 각 티커별로 min/max 계산
       this.dataMap.forEach((value, symbol) => {
         const obvData = value.data['obv'] || [];
-        const obvValues = obvData.map(d => d.y || 0);
+        const obvValues = obvData.map(d => d.y).filter(v => v !== null && v !== undefined);
         
         if (obvValues.length > 0) {
           obvMinMaxBySymbol.set(symbol, {
@@ -1097,7 +1234,7 @@ export class OverlayStockChart {
       
       this.dataMap.forEach((value) => {
         const obvData = value.data['obv'] || [];
-        const obvValues = obvData.map(d => d.y || 0);
+        const obvValues = obvData.map(d => d.y).filter(v => v !== null && v !== undefined);
         if (obvValues.length > 0) {
           globalMin = Math.min(globalMin, ...obvValues);
           globalMax = Math.max(globalMax, ...obvValues);
@@ -1107,7 +1244,7 @@ export class OverlayStockChart {
       // 모든 티커에 동일한 min/max 적용
       this.dataMap.forEach((value, symbol) => {
         const obvData = value.data['obv'] || [];
-        const obvValues = obvData.map(d => d.y || 0);
+        const obvValues = obvData.map(d => d.y).filter(v => v !== null && v !== undefined);
         obvMinMaxBySymbol.set(symbol, {
           min: globalMin,
           max: globalMax,
@@ -1133,22 +1270,31 @@ export class OverlayStockChart {
         const candlePoints: { time: number; open: number; high: number; low: number; close: number }[] = [];
         data.forEach((d, i) => {
           if (i < obvValues.length) {
-            candlePoints.push({
-              time: d.x,
-              open: d.yOpen ?? obvValues[i],
-              high: d.yHigh ?? obvValues[i],
-              low: d.yLow ?? obvValues[i],
-              close: obvValues[i]
-            });
+            // yOpen, yHigh, yLow가 모두 유효한 경우에만 캔들 포인트 추가
+            const hasOHLC = d.yOpen !== null && d.yOpen !== undefined &&
+                            d.yHigh !== null && d.yHigh !== undefined &&
+                            d.yLow !== null && d.yLow !== undefined;
+            
+            if (hasOHLC) {
+              candlePoints.push({
+                time: d.x,
+                open: d.yOpen!,
+                high: d.yHigh!,
+                low: d.yLow!,
+                close: obvValues[i]
+              });
+            }
           }
         });
-        this.drawCandles(candlePoints, minMax, color, minTime, maxTime, obvTopY, obvHeight);
+        if (candlePoints.length > 0) {
+          this.drawCandles(candlePoints, minMax, color, minTime, maxTime, obvTopY, obvHeight);
+        }
       }
 
       if (!hideLines) {
         this.ctx.save();
         this.ctx.beginPath();
-        this.ctx.rect(this.padding, obvTopY, this.width - this.padding * 2, obvHeight);
+        this.ctx.rect(this.chartAreaLeft, obvTopY, this.chartAreaWidth, obvHeight);
         this.ctx.clip();
 
         this.ctx.strokeStyle = color;
@@ -1244,7 +1390,7 @@ export class OverlayStockChart {
         globalMin = Math.min(globalMin, obvData.min);
         globalMax = Math.max(globalMax, obvData.max);
       });
-      this.drawYAxisLabels(obvTopY, obvHeight, obvTopY + obvHeight, globalMin, globalMax);
+      this.drawYAxisLabels(obvTopY, obvHeight, obvTopY + obvHeight, globalMin, globalMax, 'obv');
     }
 
     // 'OBV' 세로 텍스트
@@ -1334,7 +1480,7 @@ export class OverlayStockChart {
     if (avgPoints.length > 0) {
       this.ctx.save();
       this.ctx.beginPath();
-      this.ctx.rect(this.padding, topY, this.width - this.padding * 2, height);
+      this.ctx.rect(this.chartAreaLeft, topY, this.chartAreaWidth, height);
       this.ctx.clip();
 
       this.ctx.strokeStyle = '#000000';
@@ -1422,15 +1568,15 @@ export class OverlayStockChart {
     
     if (showVolume) {
       this.ctx.beginPath();
-      this.ctx.moveTo(this.padding, volumeTopY);
-      this.ctx.lineTo(this.width - this.padding, volumeTopY);
+      this.ctx.moveTo(this.chartAreaLeft, volumeTopY);
+      this.ctx.lineTo(this.getChartRight(), volumeTopY);
       this.ctx.stroke();
     }
     
     if (showOBV) {
       this.ctx.beginPath();
-      this.ctx.moveTo(this.padding, obvTopY);
-      this.ctx.lineTo(this.width - this.padding, obvTopY);
+      this.ctx.moveTo(this.chartAreaLeft, obvTopY);
+      this.ctx.lineTo(this.getChartRight(), obvTopY);
       this.ctx.stroke();
     }
   }
@@ -1505,8 +1651,8 @@ export class OverlayStockChart {
     this.ctx.strokeStyle = '#000000';
     this.ctx.lineWidth = 1;
     this.ctx.beginPath();
-    this.ctx.moveTo(this.padding, baselineY);
-    this.ctx.lineTo(this.width - this.padding, baselineY);
+    this.ctx.moveTo(this.chartAreaLeft, baselineY);
+    this.ctx.lineTo(this.getChartRight(), baselineY);
     this.ctx.stroke();
 
     this.ctx.fillStyle = '#000000';
@@ -1545,7 +1691,8 @@ export class OverlayStockChart {
       
       if (x < this.padding || x > this.width - this.padding) continue;
       
-      const labelText = this.config.xFormat ? this.config.xFormat(time) : time.toString();
+      const formatted = this.config.xFormat ? this.config.xFormat(time) : time.toString();
+      const labelText = this.applyFormatResult(formatted);
       this.ctx.fillText(labelText, x, labelY);
       this.ctx.beginPath();
       this.ctx.moveTo(x, tickYStart);
@@ -1600,18 +1747,11 @@ export class OverlayStockChart {
       // 날짜 포맷 함수
       const formatDateTime = (timestamp: number): string => {
         if (this.config.xFormat) {
-          return this.config.xFormat(timestamp);
+          const formatted = this.config.xFormat(timestamp);
+          return this.applyFormatResult(formatted);
         } else {
           return timestamp.toString();
         }
-        // const date = new Date(timestamp * 1000);
-        // const year = date.getFullYear();
-        // const month = String(date.getMonth() + 1).padStart(2, '0');
-        // const day = String(date.getDate()).padStart(2, '0');
-        // const hours = String(date.getHours()).padStart(2, '0');
-        // const minutes = String(date.getMinutes()).padStart(2, '0');
-        // const seconds = String(date.getSeconds()).padStart(2, '0');
-        // return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
       };
       
       const fromDate = formatDateTime(displayMinTime);
@@ -1682,17 +1822,17 @@ export class OverlayStockChart {
       ? chartLayouts[chartLayouts.length - 1].topY + chartLayouts[chartLayouts.length - 1].height
       : this.height - this.padding;
     
-    this.ctx.strokeStyle = '#666666';
-    this.ctx.lineWidth = 1;
-    this.ctx.setLineDash([4, 4]);
+    this.ctx.strokeStyle = this.config.crosshairStrokeStyle || '#666666';
+    this.ctx.lineWidth = this.config.crosshairLineWidth || 1;
+    this.ctx.setLineDash(this.config.crosshairLineDash || [4, 4]);
     this.ctx.beginPath();
     this.ctx.moveTo(mouseX, this.padding);
     this.ctx.lineTo(mouseX, chartBottom);
     this.ctx.stroke();
 
     this.ctx.beginPath();
-    this.ctx.moveTo(this.padding, mouseY);
-    this.ctx.lineTo(this.width - this.padding, mouseY);
+    this.ctx.moveTo(this.chartAreaLeft, mouseY);
+    this.ctx.lineTo(this.getChartRight(), mouseY);
     this.ctx.stroke();
     this.ctx.setLineDash([]);
 
@@ -1704,15 +1844,17 @@ export class OverlayStockChart {
       const timeRange = maxTime - minTime || 1;
       const currentTime = minTime + timePercent * timeRange;
       const date = new Date(currentTime * 1000);
-      const dateStr = this.config.crosshairXFormat 
+      this.ctx.fillStyle = '#333333';
+      this.ctx.font = 'bold 12px Arial';
+      this.ctx.textAlign = 'center';
+      
+      const formatted = this.config.crosshairXFormat 
         ? this.config.crosshairXFormat(currentTime)
         : (this.config.xFormat 
           ? this.config.xFormat(currentTime)
           : currentTime.toString());
+      const dateStr = this.applyFormatResult(formatted);
       
-      this.ctx.fillStyle = '#333333';
-      this.ctx.font = 'bold 12px Arial';
-      this.ctx.textAlign = 'center';
       this.ctx.fillText(dateStr, mouseX, this.height - this.padding + 35);
     }
 
@@ -1727,9 +1869,10 @@ export class OverlayStockChart {
         if (this.state.normalize) {
           // 정규화 모드: 퍼센트 표시
           const valuePercent = normalizedValue * 100;
-          valueStr = this.config.crosshairYFormat
-            ? this.config.crosshairYFormat(valuePercent, layout.key)
+          const formatted = this.config.crosshairYFormat
+            ? this.config.crosshairYFormat(valuePercent, layout.key, true)
             : `${valuePercent.toFixed(1)}%`;
+          valueStr = this.applyFormatResult(formatted);
         } else {
           // 비정규화 모드: 실제 값 계산 및 포맷 적용
           // 해당 차트의 전체 min/max 범위 계산
@@ -1738,7 +1881,7 @@ export class OverlayStockChart {
           
           this.dataMap.forEach((value) => {
             const chartData = value.data[layout.key] || [];
-            const values = chartData.map(d => d.y).filter(v => v > 0);
+            const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
             if (values.length > 0) {
               globalMin = Math.min(globalMin, ...values);
               globalMax = Math.max(globalMax, ...values);
@@ -1747,11 +1890,12 @@ export class OverlayStockChart {
           
           if (globalMin !== Infinity && globalMax !== -Infinity) {
             const actualValue = globalMin + normalizedValue * (globalMax - globalMin);
-            valueStr = this.config.crosshairYFormat
-              ? this.config.crosshairYFormat(actualValue, layout.key)
+            const formatted = this.config.crosshairYFormat
+              ? this.config.crosshairYFormat(actualValue, layout.key, false)
               : (this.config.yFormat 
-                ? this.config.yFormat(actualValue) 
+                ? this.config.yFormat(actualValue, layout.key) 
                 : actualValue.toLocaleString(undefined, { maximumFractionDigits: 2 }));
+            valueStr = this.applyFormatResult(formatted);
           }
         }
         break;
@@ -1763,7 +1907,7 @@ export class OverlayStockChart {
       this.ctx.font = 'bold 12px Arial';
       this.ctx.textAlign = 'left';
       this.ctx.textBaseline = 'middle';
-      this.ctx.fillText(valueStr, this.width - this.padding + 5, mouseY);
+      this.ctx.fillText(valueStr, this.paddingLeft + this.chartAreaWidth + 5, mouseY);
     }
   }
 
@@ -1798,7 +1942,7 @@ export class OverlayStockChart {
         // 정규화: 각 티커별로 min/max 계산
         this.dataMap.forEach((value, symbol) => {
           const chartData = value.data[chartKey] || [];
-          const values = chartData.map(d => d.y).filter(v => v > 0);
+          const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
           if (values.length > 0) {
             minMaxBySymbol.set(symbol, { min: Math.min(...values), max: Math.max(...values) });
           }
@@ -1809,7 +1953,7 @@ export class OverlayStockChart {
         
         this.dataMap.forEach((value) => {
           const chartData = value.data[chartKey] || [];
-          const values = chartData.map(d => d.y).filter(v => v > 0);
+          const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
           if (values.length > 0) {
             globalMin = Math.min(globalMin, ...values);
             globalMax = Math.max(globalMax, ...values);
@@ -1832,7 +1976,7 @@ export class OverlayStockChart {
 
         const chartData = value.data[chartKey] || [];
         chartData.forEach(d => {
-          if (!d.y || d.y <= 0) return;
+          if (d.y === null || d.y === undefined) return;
           const time = d.x;
           if (time < minTime || time > maxTime) return;
 
@@ -1860,20 +2004,39 @@ export class OverlayStockChart {
     point: { symbol: string; x: number; y: number; value: number; time: number; chartType: string },
     canvasWidth: number
   ) {
-    const dateStr = this.config.xFormat 
-      ? this.config.xFormat(point.time)
-      : point.time.toString();
+    const xFormatted = this.config.tooltipXFormat
+      ? this.config.tooltipXFormat(point.time, point.symbol, point.chartType)
+      : (this.config.xFormat 
+        ? this.config.xFormat(point.time, point.chartType)
+        : point.time.toString());
+    const dateStr = this.applyFormatResult(xFormatted);
     
-    let valueStr: string;
-    if (this.config.yFormat) {
-      valueStr = this.config.yFormat(point.value);
-    } else if (point.chartType === 'Volume' || point.chartType === 'OBV') {
-      valueStr = point.value.toLocaleString();
+    let text: string;
+    if (this.config.tooltipLabelFormat) {
+      const formatted = this.config.tooltipLabelFormat(point.symbol, point.chartType, point.value, point.time);
+      text = this.applyFormatResult(formatted);
     } else {
-      valueStr = point.value.toFixed(2);
+      let valueStr: string;
+      if (this.config.tooltipYFormat) {
+        const formatted = this.config.tooltipYFormat(point.value, point.chartType, point.symbol);
+        valueStr = this.applyFormatResult(formatted);
+      } else if (this.config.yFormat) {
+        const formatted = this.config.yFormat(point.value, point.chartType);
+        valueStr = this.applyFormatResult(formatted);
+      } else if (point.chartType === 'Volume' || point.chartType === 'OBV') {
+        valueStr = point.value.toLocaleString();
+      } else {
+        valueStr = point.value.toFixed(2);
+      }
+      
+      const labelFormatted = this.config.labelFormat
+        ? this.config.labelFormat(point.chartType)
+        : point.chartType;
+      const chartLabel = this.applyFormatResult(labelFormatted);
+      
+      text = `${point.symbol} (${chartLabel}): ${valueStr}`;
     }
     
-    const text = `${point.symbol} (${point.chartType}): ${valueStr}`;
     const subText = dateStr;
     
     this.ctx.font = 'bold 11px Arial';
@@ -2221,11 +2384,18 @@ export class OverlayStockChart {
       for (const item of this.legendItems) {
         if (clickX >= item.x && clickX <= item.x + item.width &&
             clickY >= item.y && clickY <= item.y + item.height) {
-          if (this.state.visibleTickers.has(item.symbol)) {
+          const wasVisible = this.state.visibleTickers.has(item.symbol);
+          if (wasVisible) {
             this.state.visibleTickers.delete(item.symbol);
           } else {
             this.state.visibleTickers.add(item.symbol);
           }
+          
+          // 콜백 호출
+          if (this.config.onLegendClick) {
+            this.config.onLegendClick(item.symbol, !wasVisible);
+          }
+          
           this.render();
           break;
         }
@@ -2456,11 +2626,18 @@ export class OverlayStockChart {
           for (const item of this.legendItems) {
             if (tapX >= item.x && tapX <= item.x + item.width &&
                 tapY >= item.y && tapY <= item.y + item.height) {
-              if (this.state.visibleTickers.has(item.symbol)) {
+              const wasVisible = this.state.visibleTickers.has(item.symbol);
+              if (wasVisible) {
                 this.state.visibleTickers.delete(item.symbol);
               } else {
                 this.state.visibleTickers.add(item.symbol);
               }
+              
+              // 콜백 호출
+              if (this.config.onLegendClick) {
+                this.config.onLegendClick(item.symbol, !wasVisible);
+              }
+              
               break;
             }
           }
@@ -2524,10 +2701,10 @@ export class OverlayStockChart {
             });
           } else {
             const existing = dailyMap.get(dayKey)!;
-            if (d.yHigh !== undefined && existing.yHigh !== undefined) {
+            if (d.yHigh !== undefined && existing.yHigh !== undefined && d.yHigh !== null && existing.yHigh !== null) {
               existing.yHigh = Math.max(existing.yHigh, d.yHigh);
             }
-            if (d.yLow !== undefined && existing.yLow !== undefined) {
+            if (d.yLow !== undefined && existing.yLow !== undefined && d.yLow !== null && existing.yLow !== null) {
               existing.yLow = Math.min(existing.yLow, d.yLow);
             }
             existing.y = d.y;
@@ -2552,6 +2729,14 @@ export class OverlayStockChart {
     const { width: cssW, height: cssH } = this.canvas.getBoundingClientRect();
     const width = Math.max(300, cssW);
     let totalHeight = Math.max(200, cssH);
+    
+    // 차트 영역 너비 계산 (기본 padding 기준으로 고정)
+    const defaultPadding = 50;
+    this.chartAreaWidth = width - defaultPadding * 2;
+    this.chartAreaLeft = defaultPadding;
+    
+    // 실제 그리기에 사용할 padding은 기본값 사용 (차트 영역 고정)
+    this.padding = defaultPadding;
     
     // 차트 레이아웃 계산
     const chartCount = this.state.visibleChartKeys.length;
@@ -2723,8 +2908,8 @@ export class OverlayStockChart {
         this.ctx.strokeStyle = '#000000';
         this.ctx.lineWidth = 2;
         this.ctx.beginPath();
-        this.ctx.moveTo(this.padding, layout.topY);
-        this.ctx.lineTo(this.width - this.padding, layout.topY);
+        this.ctx.moveTo(this.chartAreaLeft, layout.topY);
+        this.ctx.lineTo(this.getChartRight(), layout.topY);
         this.ctx.stroke();
       }
     });

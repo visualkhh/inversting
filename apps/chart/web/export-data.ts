@@ -16,8 +16,8 @@ const tsmcTicker = '2330.TW';
 const skhynixTicker = '000660.KS';
 const goldTicker = 'GOLD';
 // 기본 심볼 목록 (stock-diff와 동일)
-// const symbols = [tsmcTicker, micronTicker, amdTicker, intelTicker, broadcomTicker];
-const symbols = [goldTicker, oracleTicker,nebiusTicker, coreWeaveTicker, irenTicker];
+const symbols = [tsmcTicker, micronTicker, amdTicker, intelTicker, broadcomTicker];
+// const symbols = [goldTicker, oracleTicker,nebiusTicker, coreWeaveTicker, irenTicker];
 
 // 날짜 범위 (stock-diff와 동일)
 const from = '2025-02-01';
