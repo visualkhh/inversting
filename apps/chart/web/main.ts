@@ -1,4 +1,13 @@
-import { OverlayStockChart, type ChartData, type EventMarker } from './OverlayStockChart';
+import { OverlayStockChart, type EventMarker } from './OverlayStockChart';
+
+// 새로운 ChartData 타입 (OverlayStockChart에서 사용)
+type ChartData = {
+  x: number;
+  yOpen?: number;
+  yHigh?: number;
+  yLow?: number;
+  y: number;
+};
 
 const statusTextEl = document.getElementById('status-text');
 const toggleEventsEl = document.getElementById('toggle-events') as HTMLInputElement | null;
@@ -33,16 +42,79 @@ function setStatus(text: string) {
   if (statusTextEl) statusTextEl.textContent = text;
 }
 
-function makeSampleData(): { dataMap: Map<string, { color?: string; datas: ChartData[]; events?: EventMarker[] }>; commonEvents: EventMarker[] } {
+// 기존 데이터 타입 (파일에서 로드되는 형식)
+type OldChartData = {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+  obv?: number;
+};
+
+// 기존 데이터를 새 형식으로 변환
+function convertToNewFormat(oldData: OldChartData[]): { [key: string]: ChartData[] } {
+  const result: { [key: string]: ChartData[] } = {
+    price: [],
+    volume: [],
+    obv: []
+  };
+  
+  oldData.forEach(d => {
+    const timestamp = new Date(d.timestamp).getTime() / 1000;
+    
+    // Price 데이터
+    if (d.close !== null && d.close !== undefined) {
+      result.price.push({
+        x: timestamp,
+        yOpen: d.open ?? 0,
+        yHigh: d.high ?? d.close,
+        yLow: d.low ?? d.close,
+        y: d.close
+      });
+    }
+    
+    // Volume 데이터
+    if (d.volume !== null && d.volume !== undefined) {
+      result.volume.push({
+        x: timestamp,
+        yOpen: d.volume-(d.volume/6),
+        yHigh: d.volume+(d.volume/6),
+        yLow: d.volume-(d.volume/6),
+        y: d.volume
+      });
+    }
+    
+    // OBV 데이터
+    if (d.obv !== null && d.obv !== undefined) {
+      result.obv.push({
+        x: timestamp,
+        yOpen: d.obv-(d.obv/6),
+        yHigh: d.obv+(d.obv/6),
+        yLow: d.obv-(d.obv/6),
+        y: d.obv
+      });
+    }
+  });
+  
+  return result;
+}
+
+function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>; commonEvents: EventMarker[] } {
   const symbols = ['AVGO', 'MU', '005930.KS', '000660.KS'];
   const start = new Date('2025-09-01T00:00:00Z').getTime();
   const day = 24 * 60 * 60 * 1000;
   const points = 60;
 
-  const dataMap = new Map<string, { color?: string; datas: ChartData[]; events?: EventMarker[] }>();
+  const dataMap = new Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>();
   symbols.forEach((sym, idx) => {
     let price = 100 + idx * 10;
-    const arr: ChartData[] = [];
+    const priceData: ChartData[] = [];
+    const volumeData: ChartData[] = [];
+    const obvData: ChartData[] = [];
+    let obv = 0;
+    
     for (let i = 0; i < points; i++) {
       const noise = (Math.random() - 0.5) * 4;
       const drift = 0.3 * i;
@@ -50,11 +122,32 @@ function makeSampleData(): { dataMap: Map<string, { color?: string; datas: Chart
       const high = close + Math.random() * 3;
       const low = close - Math.random() * 3;
       const open = (close + low) / 2;
-      const ts = new Date(start + i * day).toISOString().replace('T', ' ').replace('Z', '');
-      arr.push({ timestamp: ts, open, high, low, close });
+      const volume = Math.floor(Math.random() * 1000000) + 100000;
+      const timestamp = (start + i * day) / 1000;
+      
+      // OBV 계산
+      if (i > 0) {
+        if (close > price) {
+          obv += volume;
+        } else if (close < price) {
+          obv -= volume;
+        }
+      }
+      
+      priceData.push({ x: timestamp, yOpen: open, yHigh: high, yLow: low, y: close });
+      volumeData.push({ x: timestamp, y: volume });
+      obvData.push({ x: timestamp, y: obv });
+      
       price = close;
     }
-    dataMap.set(sym, { datas: arr });
+    
+    dataMap.set(sym, { 
+      data: {
+        price: priceData,
+        volume: volumeData,
+        obv: obvData
+      }
+    });
   });
 
   const commonEvents: EventMarker[] = [
@@ -66,7 +159,7 @@ function makeSampleData(): { dataMap: Map<string, { color?: string; datas: Chart
   return { dataMap, commonEvents };
 }
 
-async function loadData(): Promise<{ dataMap: Map<string, { color?: string; datas: ChartData[]; events?: EventMarker[] }>; commonEvents: EventMarker[] }> {
+async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>; commonEvents: EventMarker[] }> {
   try {
     // 1. 티커 목록 로드
     const tickersResp = await fetch('data/tickers.json');
@@ -80,7 +173,7 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
     setStatus(`Loading ${tickers.length} tickers...`);
     
     // 2. 각 티커별 데이터 및 이벤트 로드
-    const map = new Map<string, { color?: string; datas: ChartData[]; events?: EventMarker[] }>();
+    const map = new Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>();
     
     const loadPromises = tickers.map(async (ticker) => {
       try {
@@ -90,8 +183,11 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
           console.warn(`Failed to load ${ticker}.json`);
           return;
         }
-        const data = await dataResp.json() as ChartData[];
-        const fData = data.filter(it => it.close !== null || it.open !== null);
+        const oldData = await dataResp.json() as OldChartData[];
+        const fData = oldData.filter(it => (it.close !== null && it.close !== undefined) || (it.open !== null && it.open !== undefined));
+        
+        // 새 형식으로 변환
+        const newData = convertToNewFormat(fData);
         
         // 티커별 이벤트 로드
         let tickerEvents: EventMarker[] | undefined = undefined;
@@ -104,7 +200,7 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
           console.warn(`No events file for ${ticker}`);
         }
         
-        map.set(ticker, { datas: fData, events: tickerEvents });
+        map.set(ticker, { data: newData, events: tickerEvents });
       } catch (err) {
         console.warn(`Error loading ${ticker}:`, err);
       }
@@ -131,13 +227,12 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
   }
 }
 
-let currentData: { dataMap: Map<string, { color?: string; datas: ChartData[]; events?: EventMarker[] }>; commonEvents: EventMarker[] } | null = null;
+let currentData: { dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>; commonEvents: EventMarker[] } | null = null;
 let overlayChart: OverlayStockChart | null = null;
 let showEvents = false;
 let showCandles = false;
 let showGaps = true;
-let showVolume = false;
-let showOBV = false;
+let visibleChartKeys = ['price', 'volume', 'obv']; // 표시할 차트 키들
 let smoothMode: 'none' | 'smooth' | 'open' | 'high' | 'low' | 'middle' = 'none';
 let showAverage = false;
 let hideValues = false;
@@ -160,26 +255,71 @@ let rangeMax = 100;
     visibleTickers.add(symbol);
   });
   
+  if (!currentData) {
+    setStatus('Failed to load data');
+    return;
+  }
+
   // OverlayStockChart 초기화
-  overlayChart = new OverlayStockChart(canvas, currentData.dataMap, currentData.commonEvents, {
-    enabledTickers,
-    visibleTickers,
-    showEvents,
-    showCandles,
-    showGaps,
-    showVolume,
-    showOBV,
-    smoothMode,
-    showAverage,
-    hideValues,
-    dailyGroup,
-    hideLines,
-    showGrid,
-    showPoints,
-    normalize,
-    rangeMin,
-    rangeMax
-  });
+  overlayChart = new OverlayStockChart(
+    canvas, 
+    currentData.dataMap, 
+    currentData.commonEvents, 
+    {
+      enabledTickers,
+      visibleTickers,
+      showEvents,
+      showCandles,
+      showGaps,
+      visibleChartKeys,
+      smoothMode,
+      showAverage,
+      hideValues,
+      dailyGroup,
+      hideLines,
+      showGrid,
+      showPoints,
+      normalize,
+      rangeMin,
+      rangeMax
+    },
+    {
+      xFormat: (xValue: number) => {
+        const date = new Date(xValue * 1000);
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const seconds = String(date.getSeconds()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      },
+      yFormat: (yValue: number) => {
+        return yValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+      },
+      crosshairYFormat: (yValue: number, chartKey: string) => {
+        return yValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+      },
+      crosshairXFormat: (xValue: number) => {
+        const date = new Date(xValue * 1000);
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const seconds = String(date.getSeconds()).padStart(2, '0');
+        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+      },
+      labelFormat: (chartKey: string) => {
+        const labels: { [key: string]: string } = {
+          price: 'Price',
+          volume: 'Volume',
+          obv: 'OBV'
+        };
+        return labels[chartKey] || chartKey;
+      }
+    }
+  );
   
   setStatus('Ready');
 
@@ -187,7 +327,7 @@ let rangeMax = 100;
   const tickerListEl = document.getElementById('ticker-list');
   const toggleAllTickersEl = document.getElementById('toggle-all-tickers') as HTMLInputElement | null;
   
-  if (currentData && tickerListEl) {
+  if (tickerListEl) {
     // 각 티커별 토글 버튼 생성
     currentData.dataMap.forEach((_, symbol) => {
       const label = document.createElement('label');
@@ -206,8 +346,8 @@ let rangeMax = 100;
           visibleTickers.delete(symbol);
         }
         
-        if (toggleAllTickersEl) {
-          toggleAllTickersEl.checked = enabledTickers.size === currentData!.dataMap.size;
+        if (toggleAllTickersEl && currentData) {
+          toggleAllTickersEl.checked = enabledTickers.size === currentData.dataMap.size;
         }
         
         overlayChart?.updateState({ enabledTickers, visibleTickers });
@@ -221,10 +361,11 @@ let rangeMax = 100;
     // 전체 토글 이벤트
     if (toggleAllTickersEl) {
       toggleAllTickersEl.addEventListener('change', () => {
+        if (!currentData) return;
         const isChecked = toggleAllTickersEl.checked;
         
         if (isChecked) {
-          currentData!.dataMap.forEach((_, symbol) => {
+          currentData.dataMap.forEach((_, symbol) => {
             enabledTickers.add(symbol);
             visibleTickers.add(symbol);
             const checkbox = document.getElementById(`toggle-ticker-${symbol}`) as HTMLInputElement;
@@ -233,7 +374,7 @@ let rangeMax = 100;
         } else {
           enabledTickers.clear();
           visibleTickers.clear();
-          currentData!.dataMap.forEach((_, symbol) => {
+          currentData.dataMap.forEach((_, symbol) => {
             const checkbox = document.getElementById(`toggle-ticker-${symbol}`) as HTMLInputElement;
             if (checkbox) checkbox.checked = false;
           });
@@ -269,18 +410,30 @@ let rangeMax = 100;
   }
 
   if (toggleVolumeEl) {
-    toggleVolumeEl.checked = showVolume;
+    toggleVolumeEl.checked = visibleChartKeys.includes('volume');
     toggleVolumeEl.addEventListener('change', () => {
-      showVolume = toggleVolumeEl.checked;
-      overlayChart?.updateState({ showVolume });
+      if (toggleVolumeEl.checked) {
+        if (!visibleChartKeys.includes('volume')) {
+          visibleChartKeys.push('volume');
+        }
+      } else {
+        visibleChartKeys = visibleChartKeys.filter(k => k !== 'volume');
+      }
+      overlayChart?.updateState({ visibleChartKeys: [...visibleChartKeys] });
     });
   }
 
   if (toggleOBVEl) {
-    toggleOBVEl.checked = showOBV;
+    toggleOBVEl.checked = visibleChartKeys.includes('obv');
     toggleOBVEl.addEventListener('change', () => {
-      showOBV = toggleOBVEl.checked;
-      overlayChart?.updateState({ showOBV });
+      if (toggleOBVEl.checked) {
+        if (!visibleChartKeys.includes('obv')) {
+          visibleChartKeys.push('obv');
+        }
+      } else {
+        visibleChartKeys = visibleChartKeys.filter(k => k !== 'obv');
+      }
+      overlayChart?.updateState({ visibleChartKeys: [...visibleChartKeys] });
     });
   }
 
