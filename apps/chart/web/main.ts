@@ -101,7 +101,7 @@ function convertToNewFormat(oldData: OldChartData[]): { [key: string]: ChartData
   return result;
 }
 
-function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>; commonEvents: EventMarker[] } {
+function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>; commonEvents: { [key: string]: EventMarker[] } } {
   const symbols = ['AVGO', 'MU', '005930.KS', '000660.KS'];
   const start = new Date('2025-09-01T00:00:00Z').getTime();
   const day = 24 * 60 * 60 * 1000;
@@ -150,16 +150,18 @@ function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key
     });
   });
 
-  const commonEvents: EventMarker[] = [
-    { timestamp: '2025-09-15 09:30:00', label: 'Event A', color: '#FF0000' },
-    { timestamp: '2025-10-15 09:30:00', label: 'Event B', color: '#0000FF' },
-    { timestamp: '2025-11-15 09:30:00', label: 'Event C', color: '#00AA00' },
-  ];
+  const commonEvents: { [key: string]: EventMarker[] } = {
+    price: [
+      { x: new Date('2025-09-15 09:30:00').getTime() / 1000, label: 'Event A', color: '#FF0000' },
+      { x: new Date('2025-10-15 09:30:00').getTime() / 1000, label: 'Event B', color: '#0000FF' },
+      { x: new Date('2025-11-15 09:30:00').getTime() / 1000, label: 'Event C', color: '#00AA00' },
+    ]
+  };
 
   return { dataMap, commonEvents };
 }
 
-async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>; commonEvents: EventMarker[] }> {
+async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>; commonEvents: { [key: string]: EventMarker[] } }> {
   try {
     // 1. 티커 목록 로드
     const tickersResp = await fetch('data/tickers.json');
@@ -208,18 +210,34 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
     
     await Promise.all(loadPromises);
     
-    // 3. 공통 이벤트 로드
-    let commonEvents: EventMarker[] = [];
-    try {
-      const commonEventsResp = await fetch('data/events.json');
-      if (commonEventsResp.ok) {
-        commonEvents = await commonEventsResp.json() as EventMarker[];
+    // 3. 데이터에서 실제 존재하는 차트 키 추출
+    const chartKeysSet = new Set<string>();
+    map.forEach((value) => {
+      Object.keys(value.data).forEach(key => {
+        if (value.data[key].length > 0) {
+          chartKeysSet.add(key);
+        }
+      });
+    });
+    const chartKeys = Array.from(chartKeysSet);
+    
+    // 4. 공통 이벤트 로드 (차트별로 분리된 파일)
+    const commonEvents: { [key: string]: EventMarker[] } = {};
+    
+    for (const chartKey of chartKeys) {
+      try {
+        const eventsResp = await fetch(`data/${chartKey}_events.json`);
+        if (eventsResp.ok) {
+          commonEvents[chartKey] = await eventsResp.json() as EventMarker[];
+          console.log(`Loaded ${commonEvents[chartKey].length} events for ${chartKey}`);
+        }
+      } catch (err) {
+        console.warn(`No ${chartKey}_events.json file`);
       }
-    } catch (err) {
-      console.warn('No common events file');
     }
     
-    setStatus(`Loaded ${map.size} tickers, ${commonEvents.length} common events`);
+    const totalEvents = Object.values(commonEvents).reduce((sum, events) => sum + events.length, 0);
+    setStatus(`Loaded ${map.size} tickers, ${totalEvents} common events`);
     return { dataMap: map, commonEvents };
   } catch (err) {
     setStatus('Using sample data (place data files to override)');
@@ -227,7 +245,7 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
   }
 }
 
-let currentData: { dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>; commonEvents: EventMarker[] } | null = null;
+let currentData: { dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>; commonEvents: { [key: string]: EventMarker[] } } | null = null;
 let overlayChart: OverlayStockChart | null = null;
 let showEvents = false;
 let showCandles = false;
@@ -260,7 +278,6 @@ let rangeMax = 100;
     return;
   }
 
-  console.log('-->', currentData.commonEvents)
   // OverlayStockChart 초기화
   overlayChart = new OverlayStockChart(
     canvas, 

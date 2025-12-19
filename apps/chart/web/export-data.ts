@@ -21,9 +21,10 @@ const xrpUsdTicker = 'XRP-USD';
 // 기본 심볼 목록 (stock-diff와 동일)
 // const symbols = [bitUsdTicker, ethereumUsdTicker, xrpUsdTicker];
 const symbols = [oracleTicker,nebiusTicker, coreWeaveTicker, irenTicker];
+// const symbols = [broadcomTicker, samsungTicker, intelTicker, amdTicker, micronTicker, oracleTicker, nvidiaTicker, tsmcTicker, skhynixTicker, bitUsdTicker, ethereumUsdTicker, xrpUsdTicker];
 
 // 날짜 범위 (stock-diff와 동일)
-const from = '2025-02-01';
+const from = '2024-01-01';
 const to = '2025-12-27';
 
 async function main() {
