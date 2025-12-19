@@ -20,8 +20,9 @@ const ethereumUsdTicker = 'ETH-USD';
 const xrpUsdTicker = 'XRP-USD';
 // 기본 심볼 목록 (stock-diff와 동일)
 // const symbols = [bitUsdTicker, ethereumUsdTicker, xrpUsdTicker];
-const symbols = [oracleTicker,nebiusTicker, coreWeaveTicker, irenTicker];
+// const symbols = [oracleTicker,nebiusTicker, coreWeaveTicker, irenTicker];
 // const symbols = [broadcomTicker, samsungTicker, intelTicker, amdTicker, micronTicker, oracleTicker, nvidiaTicker, tsmcTicker, skhynixTicker, bitUsdTicker, ethereumUsdTicker, xrpUsdTicker];
+const symbols = [broadcomTicker, samsungTicker, amdTicker, micronTicker, nvidiaTicker, skhynixTicker];
 
 // 날짜 범위 (stock-diff와 동일)
 const from = '2024-01-01';
@@ -47,10 +48,10 @@ async function main() {
 
   // 이벤트를 티커별로 분류 (label에 티커명이 포함되어 있으면 해당 티커에 할당)
   allEvents.forEach(event => {
-    // timestamp를 x (number)로 변환
+    // timestamp를 x (밀리초)로 변환
     const convertedEvent = {
       ...event,
-      x: event.timestamp ? new Date(event.timestamp).getTime() / 1000 : undefined,
+      x: event.timestamp ? new Date(event.timestamp).getTime() : undefined,
       timestamp: undefined // timestamp 필드 제거
     };
     

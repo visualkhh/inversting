@@ -2028,9 +2028,9 @@ export class OverlayStockChart {
             this.ctx.restore();
           });
           
-          // 라벨 (startX 위치에 표시)
+          // 라벨 (startX 위치, 차트 안쪽에 표시)
           const labelX = x1;
-          const labelY = chartLayouts[0].topY;
+          const labelY = chartLayouts[0].topY ;
           this.drawRangeEventLabel(event, labelX, labelY, eventColor, 'left');
           
           // 호버 체크
@@ -2207,16 +2207,17 @@ export class OverlayStockChart {
             : event.label;
           const labelText = this.applyFormatResult(labelFormatted);
 
-          // 레이블 위치 계산 (회전 전)
-          const labelY = this.padding + 10;
+          // 레이블 위치 계산 (90도 회전하여 가로로 눕힘, 차트 안쪽에 표시)
+          const labelY = chartLayouts[0].topY; // 차트 영역 안쪽
           this.ctx.save();
           this.ctx.translate(x, labelY);
-          this.ctx.rotate(Math.PI / 4);
+          this.ctx.rotate(Math.PI / 2); // 90도 시계방향 회전 (가로로 눕힘)
           this.ctx.fillStyle = strokeStyle;
-          this.ctx.font = 'bold 12px Arial';
-          this.ctx.textAlign = 'left';
+          this.ctx.font = 'bold 11px Arial';
+          this.ctx.textAlign = 'left'; // 왼쪽 정렬로 텍스트가 차트 안쪽에 위치
+          this.ctx.textBaseline = 'bottom'; // 아래쪽 정렬
           const textMetrics = this.ctx.measureText(labelText);
-          this.ctx.fillText(labelText, 5, 0);
+          this.ctx.fillText(labelText, 5, 0); // 양수 오프셋으로 선에서 떨어뜨림
           this.ctx.restore();
           
           // 호버 가능한 영역 저장 (레이블 영역)
@@ -2544,12 +2545,12 @@ export class OverlayStockChart {
         ? this.config.tooltipXFormat(event.startX, '', event.chartKey || '')
         : (this.config.xFormat 
           ? this.config.xFormat(event.startX, 0, 1, event.chartKey)
-          : new Date(event.startX * 1000).toLocaleString());
+          : new Date(event.startX).toLocaleString());
       const endXFormatted = this.config.tooltipXFormat
         ? this.config.tooltipXFormat(event.endX, '', event.chartKey || '')
         : (this.config.xFormat 
           ? this.config.xFormat(event.endX, 0, 1, event.chartKey)
-          : new Date(event.endX * 1000).toLocaleString());
+          : new Date(event.endX).toLocaleString());
       
       subTextParts.push(`Period: ${this.applyFormatResult(startXFormatted)} ~ ${this.applyFormatResult(endXFormatted)}`);
       
@@ -2571,12 +2572,12 @@ export class OverlayStockChart {
         ? this.config.tooltipXFormat(event.startX, '', event.chartKey || '')
         : (this.config.xFormat 
           ? this.config.xFormat(event.startX, 0, 1, event.chartKey)
-          : new Date(event.startX * 1000).toLocaleString());
+          : new Date(event.startX).toLocaleString());
       const endXFormatted = this.config.tooltipXFormat
         ? this.config.tooltipXFormat(event.endX, '', event.chartKey || '')
         : (this.config.xFormat 
           ? this.config.xFormat(event.endX, 0, 1, event.chartKey)
-          : new Date(event.endX * 1000).toLocaleString());
+          : new Date(event.endX).toLocaleString());
       
       subTextParts.push(`Period: ${this.applyFormatResult(startXFormatted)} ~ ${this.applyFormatResult(endXFormatted)}`);
     } else if (isYRangeEvent(event)) {
@@ -2606,7 +2607,7 @@ export class OverlayStockChart {
           ? this.config.tooltipXFormat(xTime, '', chartKey || '')
           : (this.config.xFormat 
             ? this.config.xFormat(xTime, 0, 1, chartKey)
-            : new Date(xTime * 1000).toLocaleString());
+            : new Date(xTime).toLocaleString());
         subTextParts.push(`X: ${this.applyFormatResult(xFormatted)}`);
       }
       
@@ -2716,12 +2717,12 @@ export class OverlayStockChart {
     const seenDays = new Set<string>();
     
     visibleTimes.forEach(time => {
-      const date = new Date(time * 1000);
+      const date = new Date(time);
       const dayKey = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
       if (!seenDays.has(dayKey)) {
         seenDays.add(dayKey);
         const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0);
-        const dayStartTime = dayStart.getTime() / 1000;
+        const dayStartTime = dayStart.getTime();
         if (dayStartTime >= minTime && dayStartTime <= maxTime) {
           dayStartTimes.push(dayStartTime);
         }
@@ -2907,7 +2908,7 @@ export class OverlayStockChart {
       const maxTime = displayMaxTime ?? sortedTimes[sortedTimes.length - 1];
       const timeRange = maxTime - minTime || 1;
       const currentTime = minTime + timePercent * timeRange;
-      const date = new Date(currentTime * 1000);
+      const date = new Date(currentTime);
       this.ctx.fillStyle = '#333333';
       this.ctx.font = 'bold 12px Arial';
       this.ctx.textAlign = 'center';
@@ -3867,9 +3868,9 @@ export class OverlayStockChart {
         const dailyMap = new Map<number, ChartData>();
         
         value.data[dataType].forEach(d => {
-          const date = new Date(d.x * 1000);
+          const date = new Date(d.x);
           const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0);
-          const dayKey = dayStart.getTime() / 1000;
+          const dayKey = dayStart.getTime();
           
           if (!dailyMap.has(dayKey)) {
             dailyMap.set(dayKey, {

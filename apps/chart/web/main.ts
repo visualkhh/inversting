@@ -62,7 +62,7 @@ function convertToNewFormat(oldData: OldChartData[]): { [key: string]: ChartData
   };
   
   oldData.forEach(d => {
-    const timestamp = new Date(d.timestamp).getTime() / 1000;
+    const timestamp = new Date(d.timestamp).getTime();
     
     // Price 데이터
     if (d.close !== null && d.close !== undefined) {
@@ -123,7 +123,7 @@ function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key
       const low = close - Math.random() * 3;
       const open = (close + low) / 2;
       const volume = Math.floor(Math.random() * 1000000) + 100000;
-      const timestamp = (start + i * day) / 1000;
+      const timestamp = start + i * day;
       
       // OBV 계산
       if (i > 0) {
@@ -152,12 +152,12 @@ function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key
 
   const commonEvents: { [key: string]: EventMarker[] } = {
     price: [
-      { x: new Date('2025-09-15 09:30:00').getTime() / 1000, label: 'Event A', color: '#FF0000' },
-      { x: new Date('2025-10-15 09:30:00').getTime() / 1000, label: 'Event B', color: '#0000FF' },
-      { x: new Date('2025-11-15 09:30:00').getTime() / 1000, label: 'Event C', color: '#00AA00' },
+      { x: new Date('2025-09-15 09:30:00').getTime(), label: 'Event A', color: '#FF0000' },
+      { x: new Date('2025-10-15 09:30:00').getTime(), label: 'Event B', color: '#0000FF' },
+      { x: new Date('2025-11-15 09:30:00').getTime(), label: 'Event C', color: '#00AA00' },
       { 
-        startX: new Date('2025-09-20 00:00:00').getTime() / 1000, 
-        endX: new Date('2025-10-05 00:00:00').getTime() / 1000, 
+        startX: new Date('2025-09-20 00:00:00').getTime(), 
+        endX: new Date('2025-10-05 00:00:00').getTime(), 
         label: 'Earnings Season', 
         color: 'rgba(255, 165, 0, 0.2)' 
       },
@@ -316,7 +316,7 @@ let rangeMax = 100;
         if (index !==0 && index !== total-1 && index % Math.ceil(total / 2) !== 0) {
           return '';
         }
-        const date = new Date(xValue * 1000);
+        const date = new Date(xValue);
         const year = date.getFullYear();
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const day = String(date.getDate()).padStart(2, '0');
@@ -343,7 +343,7 @@ let rangeMax = 100;
         return yValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
       },
       crosshairXFormat: (xValue: number) => {
-        const date = new Date(xValue * 1000);
+        const date = new Date(xValue);
         const year = date.getFullYear();
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const day = String(date.getDate()).padStart(2, '0');
