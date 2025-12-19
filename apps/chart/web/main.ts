@@ -155,6 +155,12 @@ function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key
       { x: new Date('2025-09-15 09:30:00').getTime() / 1000, label: 'Event A', color: '#FF0000' },
       { x: new Date('2025-10-15 09:30:00').getTime() / 1000, label: 'Event B', color: '#0000FF' },
       { x: new Date('2025-11-15 09:30:00').getTime() / 1000, label: 'Event C', color: '#00AA00' },
+      { 
+        startX: new Date('2025-09-20 00:00:00').getTime() / 1000, 
+        endX: new Date('2025-10-05 00:00:00').getTime() / 1000, 
+        label: 'Earnings Season', 
+        color: 'rgba(255, 165, 0, 0.2)' 
+      },
     ]
   };
 
@@ -303,7 +309,7 @@ let rangeMax = 100;
     },
     {
       paddingLeft: 100,
-      // paddingRight: 100,
+      paddingRight: 100,
       // paddingTop: 100,
       // paddingBottom: 100,
       xFormat: (xValue: number, index, total) => {

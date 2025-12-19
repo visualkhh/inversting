@@ -6,11 +6,87 @@ type ChartData = {
   y: number;
 };
 
-interface EventMarker {
-  x?: number; // X축 값 (Unix timestamp in seconds)
-  y?: number; // Y축 값
+// 공통 이벤트 속성
+interface EventBase {
   label: string;
   color?: string;
+}
+
+// X축 포인트 이벤트 (세로 라인)
+interface XPointEvent {
+  x: number; // X축 값 (Unix timestamp in seconds)
+}
+
+// Y축 포인트 이벤트 (가로 라인)
+interface YPointEvent {
+  y: number; // Y축 값
+}
+
+// XY 포인트 이벤트 (화살표 마커)
+interface XYPointEvent {
+  x: number; // X축 값 (Unix timestamp in seconds)
+  y: number; // Y축 값
+}
+
+// X축 범위 이벤트 (시간 범위 영역)
+interface XRangeEvent {
+  startX: number; // 시작 X축 값 (Unix timestamp in seconds)
+  endX: number; // 종료 X축 값 (Unix timestamp in seconds)
+}
+
+// Y축 범위 이벤트 (가격 범위 영역)
+interface YRangeEvent {
+  startY: number; // 시작 Y축 값
+  endY: number; // 종료 Y축 값
+}
+
+// XY 범위 이벤트 (시간 + 가격 범위 영역)
+interface XYRangeEvent {
+  startX: number; // 시작 X축 값 (Unix timestamp in seconds)
+  startY: number; // 시작 Y축 값
+  endX: number; // 종료 X축 값 (Unix timestamp in seconds)
+  endY: number; // 종료 Y축 값
+}
+
+type EventMarker = 
+  | (XPointEvent & EventBase)
+  | (YPointEvent & EventBase)
+  | (XYPointEvent & EventBase)
+  | (XRangeEvent & EventBase)
+  | (YRangeEvent & EventBase)
+  | (XYRangeEvent & EventBase);
+
+// 타입 가드 함수
+function isXPointEvent(event: EventMarker): event is XPointEvent & EventBase {
+  return 'x' in event && !('y' in event) && !('startX' in event) && !('startY' in event);
+}
+
+function isYPointEvent(event: EventMarker): event is YPointEvent & EventBase {
+  return 'y' in event && !('x' in event) && !('startX' in event) && !('startY' in event);
+}
+
+function isXYPointEvent(event: EventMarker): event is XYPointEvent & EventBase {
+  return 'x' in event && 'y' in event && !('startX' in event) && !('startY' in event);
+}
+
+function isXRangeEvent(event: EventMarker): event is XRangeEvent & EventBase {
+  return 'startX' in event && 'endX' in event && !('startY' in event) && !('endY' in event);
+}
+
+function isYRangeEvent(event: EventMarker): event is YRangeEvent & EventBase {
+  return 'startY' in event && 'endY' in event && !('startX' in event) && !('endX' in event);
+}
+
+function isXYRangeEvent(event: EventMarker): event is XYRangeEvent & EventBase {
+  return 'startX' in event && 'endX' in event && 'startY' in event && 'endY' in event;
+}
+
+function isRangeEvent(event: EventMarker): event is (XRangeEvent | YRangeEvent | XYRangeEvent) & EventBase {
+  return isXRangeEvent(event) || isYRangeEvent(event) || isXYRangeEvent(event);
+}
+
+function isPointEvent(event: EventMarker): event is (XPointEvent | YPointEvent | XYPointEvent) & EventBase {
+  return !isRangeEvent(event);
 }
 
 interface ChartOptions {
@@ -76,6 +152,14 @@ interface ChartConfig {
   eventArrowStrokeStyle?: string | ((event: EventMarker) => string); // XY 포인트 마커 화살표 테두리 색상
   eventArrowLineWidth?: number | ((event: EventMarker) => number); // XY 포인트 마커 화살표 테두리 두께
   eventArrowSize?: number | ((event: EventMarker) => number); // XY 포인트 마커 화살표 크기
+  
+  // 범위 이벤트 스타일
+  eventRangeFillStyle?: string | ((event: EventMarker, isHovered: boolean) => string); // 범위 이벤트 영역 채우기 색상
+  eventRangeStrokeStyle?: string | ((event: EventMarker) => string); // 범위 이벤트 영역 테두리 색상
+  eventRangeLineWidth?: number | ((event: EventMarker) => number); // 범위 이벤트 영역 테두리 두께
+  eventRangeLabelFont?: string | ((event: EventMarker) => string); // 범위 이벤트 라벨 폰트
+  eventRangeLabelFillStyle?: string | ((event: EventMarker) => string); // 범위 이벤트 라벨 색상
+  eventRangeLabelBackgroundStyle?: string | ((event: EventMarker) => string); // 범위 이벤트 라벨 배경 색상
   
   // 레이아웃 설정
   paddingLeft?: number; // 왼쪽 여백 (Y축 레이블 영역)
@@ -1643,6 +1727,66 @@ export class OverlayStockChart {
     }
   }
 
+  private drawRangeEventLabel(event: EventMarker, x: number, y: number, color: string, align: 'center' | 'left' = 'center', baseline: CanvasTextBaseline = 'top') {
+    this.ctx.save();
+    
+    // 폰트 스타일 적용
+    const font = this.config.eventRangeLabelFont
+      ? (typeof this.config.eventRangeLabelFont === 'function'
+        ? this.config.eventRangeLabelFont(event)
+        : this.config.eventRangeLabelFont)
+      : 'bold 11px Arial';
+    
+    this.ctx.font = font;
+    this.ctx.textAlign = align;
+    this.ctx.textBaseline = baseline;
+    
+    const textMetrics = this.ctx.measureText(event.label);
+    const textWidth = textMetrics.width;
+    
+    // 배경 스타일 적용 (설정된 경우에만)
+    const bgStyle = this.config.eventRangeLabelBackgroundStyle
+      ? (typeof this.config.eventRangeLabelBackgroundStyle === 'function'
+        ? this.config.eventRangeLabelBackgroundStyle(event)
+        : this.config.eventRangeLabelBackgroundStyle)
+      : undefined;
+    
+    if (bgStyle) {
+      const bgX = align === 'center' ? x - textWidth / 2 - 4 : x - 4;
+      this.ctx.fillStyle = bgStyle;
+      this.ctx.fillRect(bgX, y - 2, textWidth + 8, 16);
+    }
+    
+    // 텍스트 색상 적용
+    const textColor = this.config.eventRangeLabelFillStyle
+      ? (typeof this.config.eventRangeLabelFillStyle === 'function'
+        ? this.config.eventRangeLabelFillStyle(event)
+        : this.config.eventRangeLabelFillStyle)
+      : (color.includes('rgba') ? color.replace(/[\d.]+\)$/g, '1)') : color);
+    
+    this.ctx.fillStyle = textColor;
+    this.ctx.fillText(event.label, align === 'center' ? x : x, y);
+    this.ctx.restore();
+    
+    // 클릭 가능한 영역 저장
+    this.eventMarkers.push({ 
+      event, 
+      x, 
+      y, 
+      radius: Math.max(textWidth / 2, 20) 
+    });
+  }
+
+  private checkRangeEventHover(event: EventMarker, x: number, y: number) {
+    const isHovered = this.hoveredEventMarker !== null && 
+      this.hoveredEventMarker.label === event.label &&
+      isRangeEvent(this.hoveredEventMarker);
+    
+    if (isHovered) {
+      this.eventTooltipsToRender.push({ event, x, y: y + 20, pointsDown: true });
+    }
+  }
+
   drawEventMarkers(
     sortedTimes: number[],
     chartBottom: number,
@@ -1669,12 +1813,12 @@ export class OverlayStockChart {
       } else {
         // 객체 형식: { [key: string]: EventMarker[] }
         // 현재 표시 중인 차트 키에 해당하는 이벤트만 추가
-        this.state.visibleChartKeys.forEach(chartKey => {
+        for (const chartKey of this.state.visibleChartKeys) {
           const events = this.commonEvents[chartKey];
           if (events && events.length > 0) {
             allEvents.push(...events.map(e => ({ ...e, chartKey, symbol: undefined })));
           }
-        });
+        }
       }
     }
     
@@ -1695,21 +1839,312 @@ export class OverlayStockChart {
     // 툴팁 그리기 정보 초기화 (render 함수에서 나중에 그림)
     this.eventTooltipsToRender = [];
 
-    // 이벤트를 타입별로 분리 (X-only, Y-only를 먼저 그리고 XY는 나중에)
-    const xOnlyEvents: Array<EventMarker & { symbol?: string; chartKey?: string }> = [];
-    const yOnlyEvents: Array<EventMarker & { symbol?: string; chartKey?: string }> = [];
-    const xyEvents: Array<EventMarker & { symbol?: string; chartKey?: string }> = [];
+    // 이벤트를 타입별로 분리
+    const rangeEvents: Array<EventMarker & { symbol?: string; chartKey?: string }> = [];
+    const xOnlyEvents: Array<(XPointEvent & EventBase) & { symbol?: string; chartKey?: string }> = [];
+    const yOnlyEvents: Array<(YPointEvent & EventBase) & { symbol?: string; chartKey?: string }> = [];
+    const xyEvents: Array<(XYPointEvent & EventBase) & { symbol?: string; chartKey?: string }> = [];
     
     allEvents.forEach(event => {
-      const xTime = event.x;
-      const yValue = event.y;
-      
-      if (xTime !== undefined && yValue === undefined) {
+      if (isRangeEvent(event)) {
+        rangeEvents.push(event);
+      } else if (isXPointEvent(event)) {
         xOnlyEvents.push(event);
-      } else if (xTime === undefined && yValue !== undefined) {
+      } else if (isYPointEvent(event)) {
         yOnlyEvents.push(event);
-      } else if (xTime !== undefined && yValue !== undefined) {
+      } else if (isXYPointEvent(event)) {
         xyEvents.push(event);
+      }
+    });
+
+    // 0단계: 범위 이벤트 그리기 (배경 영역, 맨 먼저 그려서 다른 요소들 뒤에 표시)
+    rangeEvents.forEach(event => {
+      if (!isRangeEvent(event)) return;
+      
+      // 색상 우선순위
+      let eventColor = event.color;
+      if (!eventColor && event.symbol) {
+        const symbolData = this.dataMap.get(event.symbol);
+        if (symbolData?.color) {
+          eventColor = symbolData.color;
+        } else {
+          eventColor = this.getTickerColor(event.symbol);
+        }
+      }
+      if (!eventColor) {
+        eventColor = 'rgba(255, 102, 0, 0.2)'; // 기본 색상 (반투명)
+      }
+      
+      // XY 범위 이벤트 (시간 + 가격 범위)
+      if (isXYRangeEvent(event)) {
+        const startX = event.startX;
+        const endX = event.endX;
+        const startY = event.startY;
+        const endY = event.endY;
+        
+        if (startX >= minTime && startX <= maxTime || endX >= minTime && endX <= maxTime || (startX <= minTime && endX >= maxTime)) {
+          const x1 = this.getX(Math.max(startX, minTime), minTime, maxTime);
+          const x2 = this.getX(Math.min(endX, maxTime), minTime, maxTime);
+          
+          const chartKey = event.chartKey || this.state.visibleChartKeys[0];
+          
+          // 해당 차트가 보이지 않으면 그리지 않음
+          if (!this.state.visibleChartKeys.includes(chartKey)) {
+            return;
+          }
+          
+          const layout = chartLayouts.find(l => l.key === chartKey);
+          
+          if (layout) {
+            let globalMin = Infinity, globalMax = -Infinity;
+            this.dataMap.forEach((value) => {
+              const chartData = value.data[chartKey] || [];
+              const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
+              if (values.length > 0) {
+                globalMin = Math.min(globalMin, ...values);
+                globalMax = Math.max(globalMax, ...values);
+              }
+            });
+            
+            if (globalMin !== Infinity && globalMax !== -Infinity) {
+              // Y 범위가 차트 데이터 범위와 겹치는지 확인
+              const rangeMin = Math.min(startY, endY);
+              const rangeMax = Math.max(startY, endY);
+              
+              // 범위가 차트 범위와 전혀 겹치지 않으면 그리지 않음
+              if (rangeMax < globalMin || rangeMin > globalMax) {
+                return;
+              }
+              
+              const y1Raw = this.getY(startY, globalMin, globalMax, layout.topY, layout.height);
+              const y2Raw = this.getY(endY, globalMin, globalMax, layout.topY, layout.height);
+              
+              // Y 좌표를 차트 영역 내로 제한
+              const y1 = Math.max(layout.topY, Math.min(layout.topY + layout.height, y1Raw));
+              const y2 = Math.max(layout.topY, Math.min(layout.topY + layout.height, y2Raw));
+              
+              const rectY = Math.min(y1, y2);
+              const rectHeight = Math.abs(y2 - y1);
+              
+              // 호버 체크
+              const isHovered = this.hoveredEventMarker !== null && 
+                this.hoveredEventMarker.label === event.label &&
+                isRangeEvent(this.hoveredEventMarker);
+              
+              // 스타일 적용
+              const fillStyle = this.config.eventRangeFillStyle
+                ? (typeof this.config.eventRangeFillStyle === 'function'
+                  ? this.config.eventRangeFillStyle(event, isHovered)
+                  : this.config.eventRangeFillStyle)
+                : (eventColor.includes('rgba') ? eventColor : eventColor + '33');
+              
+              const strokeStyle = this.config.eventRangeStrokeStyle
+                ? (typeof this.config.eventRangeStrokeStyle === 'function'
+                  ? this.config.eventRangeStrokeStyle(event)
+                  : this.config.eventRangeStrokeStyle)
+                : (eventColor.includes('rgba') ? eventColor.replace(/[\d.]+\)$/g, '0.5)') : eventColor);
+              
+              const lineWidth = this.config.eventRangeLineWidth
+                ? (typeof this.config.eventRangeLineWidth === 'function'
+                  ? this.config.eventRangeLineWidth(event)
+                  : this.config.eventRangeLineWidth)
+                : 1;
+              
+              // 클리핑 적용 (차트 영역 내에만 그리기)
+              this.ctx.save();
+              this.ctx.beginPath();
+              this.ctx.rect(this.chartAreaLeft, layout.topY, this.chartAreaWidth, layout.height);
+              this.ctx.clip();
+              
+              this.ctx.fillStyle = fillStyle;
+              this.ctx.fillRect(x1, rectY, x2 - x1, rectHeight);
+              
+              this.ctx.strokeStyle = strokeStyle;
+              this.ctx.lineWidth = lineWidth;
+              this.ctx.strokeRect(x1, rectY, x2 - x1, rectHeight);
+              
+              this.ctx.restore();
+              
+              // 라벨 (startX, startY 위치 밖에 표시)
+              const labelX = x1;
+              const labelY = y1; // startY의 실제 화면 위치
+              const baseline = startY < endY ? 'top' : 'bottom'; // startY가 작으면 아래쪽이므로 top으로 영역 밖에 표시
+              this.drawRangeEventLabel(event, labelX, labelY, eventColor, 'left', baseline);
+              
+              // 호버 체크
+              this.checkRangeEventHover(event, labelX, labelY);
+            }
+          }
+        }
+      }
+      // X 범위 이벤트 (시간 범위만)
+      else if (isXRangeEvent(event)) {
+        const startX = event.startX;
+        const endX = event.endX;
+        
+        if (startX >= minTime && startX <= maxTime || endX >= minTime && endX <= maxTime || (startX <= minTime && endX >= maxTime)) {
+          const x1 = this.getX(Math.max(startX, minTime), minTime, maxTime);
+          const x2 = this.getX(Math.min(endX, maxTime), minTime, maxTime);
+          
+          // 호버 체크
+          const isHovered = this.hoveredEventMarker !== null && 
+            this.hoveredEventMarker.label === event.label &&
+            isRangeEvent(this.hoveredEventMarker);
+          
+          // 스타일 적용
+          const fillStyle = this.config.eventRangeFillStyle
+            ? (typeof this.config.eventRangeFillStyle === 'function'
+              ? this.config.eventRangeFillStyle(event, isHovered)
+              : this.config.eventRangeFillStyle)
+            : (eventColor.includes('rgba') ? eventColor : eventColor + '33');
+          
+          const strokeStyle = this.config.eventRangeStrokeStyle
+            ? (typeof this.config.eventRangeStrokeStyle === 'function'
+              ? this.config.eventRangeStrokeStyle(event)
+              : this.config.eventRangeStrokeStyle)
+            : (eventColor.includes('rgba') ? eventColor.replace(/[\d.]+\)$/g, '0.5)') : eventColor);
+          
+          const lineWidth = this.config.eventRangeLineWidth
+            ? (typeof this.config.eventRangeLineWidth === 'function'
+              ? this.config.eventRangeLineWidth(event)
+              : this.config.eventRangeLineWidth)
+            : 1;
+          
+          // 전체 차트 높이에 걸쳐 표시
+          chartLayouts.forEach(layout => {
+            // 클리핑 적용 (차트 영역 내에만 그리기)
+            this.ctx.save();
+            this.ctx.beginPath();
+            this.ctx.rect(this.chartAreaLeft, layout.topY, this.chartAreaWidth, layout.height);
+            this.ctx.clip();
+            
+            this.ctx.fillStyle = fillStyle;
+            this.ctx.fillRect(x1, layout.topY, x2 - x1, layout.height);
+            
+            this.ctx.strokeStyle = strokeStyle;
+            this.ctx.lineWidth = lineWidth;
+            this.ctx.strokeRect(x1, layout.topY, x2 - x1, layout.height);
+            
+            this.ctx.restore();
+          });
+          
+          // 라벨 (startX 위치에 표시)
+          const labelX = x1;
+          const labelY = chartLayouts[0].topY;
+          this.drawRangeEventLabel(event, labelX, labelY, eventColor, 'left');
+          
+          // 호버 체크
+          this.checkRangeEventHover(event, labelX, labelY);
+        }
+      }
+      // Y 범위 이벤트 (가격 범위만)
+      else if (isYRangeEvent(event)) {
+        const startY = event.startY;
+        const endY = event.endY;
+        
+        const chartKey = event.chartKey || this.state.visibleChartKeys[0];
+        
+        // 해당 차트가 보이지 않으면 그리지 않음
+        if (!this.state.visibleChartKeys.includes(chartKey)) {
+          return;
+        }
+        
+        const layout = chartLayouts.find(l => l.key === chartKey);
+        
+        if (layout) {
+          let globalMin = Infinity, globalMax = -Infinity;
+          this.dataMap.forEach((value) => {
+            const chartData = value.data[chartKey] || [];
+            const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
+            if (values.length > 0) {
+              globalMin = Math.min(globalMin, ...values);
+              globalMax = Math.max(globalMax, ...values);
+            }
+          });
+          
+          if (globalMin !== Infinity && globalMax !== -Infinity) {
+            // Y 범위가 차트 데이터 범위와 겹치는지 확인
+            const rangeMin = Math.min(startY, endY);
+            const rangeMax = Math.max(startY, endY);
+            
+            // 범위가 차트 범위와 전혀 겹치지 않으면 그리지 않음
+            if (rangeMax < globalMin || rangeMin > globalMax) {
+              return;
+            }
+            
+            const y1Raw = this.getY(startY, globalMin, globalMax, layout.topY, layout.height);
+            const y2Raw = this.getY(endY, globalMin, globalMax, layout.topY, layout.height);
+            
+            // Y 좌표를 차트 영역 내로 제한
+            const y1 = Math.max(layout.topY, Math.min(layout.topY + layout.height, y1Raw));
+            const y2 = Math.max(layout.topY, Math.min(layout.topY + layout.height, y2Raw));
+            
+            const rectY = Math.min(y1, y2);
+            const rectHeight = Math.abs(y2 - y1);
+            
+            // 호버 체크
+            const isHovered = this.hoveredEventMarker !== null && 
+              this.hoveredEventMarker.label === event.label &&
+              isRangeEvent(this.hoveredEventMarker);
+            
+            // 스타일 적용
+            const fillStyle = this.config.eventRangeFillStyle
+              ? (typeof this.config.eventRangeFillStyle === 'function'
+                ? this.config.eventRangeFillStyle(event, isHovered)
+                : this.config.eventRangeFillStyle)
+              : (eventColor.includes('rgba') ? eventColor : eventColor + '33');
+            
+            const strokeStyle = this.config.eventRangeStrokeStyle
+              ? (typeof this.config.eventRangeStrokeStyle === 'function'
+                ? this.config.eventRangeStrokeStyle(event)
+                : this.config.eventRangeStrokeStyle)
+              : (eventColor.includes('rgba') ? eventColor.replace(/[\d.]+\)$/g, '0.5)') : eventColor);
+            
+            const lineWidth = this.config.eventRangeLineWidth
+              ? (typeof this.config.eventRangeLineWidth === 'function'
+                ? this.config.eventRangeLineWidth(event)
+                : this.config.eventRangeLineWidth)
+              : 1;
+            
+            // 클리핑 적용 (차트 영역 내에만 그리기)
+            this.ctx.save();
+            this.ctx.beginPath();
+            this.ctx.rect(this.chartAreaLeft, layout.topY, this.chartAreaWidth, layout.height);
+            this.ctx.clip();
+            
+            // 전체 X 범위에 걸쳐 표시
+            this.ctx.fillStyle = fillStyle;
+            this.ctx.fillRect(this.chartAreaLeft, rectY, this.chartAreaWidth, rectHeight);
+            
+            this.ctx.strokeStyle = strokeStyle;
+            this.ctx.lineWidth = lineWidth;
+            this.ctx.strokeRect(this.chartAreaLeft, rectY, this.chartAreaWidth, rectHeight);
+            
+            this.ctx.restore();
+            
+            // 라벨 (startY 위치 밖에 표시)
+            const labelX = this.chartAreaLeft;
+            const labelY = y1; // startY의 실제 화면 위치 (클램핑됨)
+            
+            // baseline 결정: 클램핑 여부와 startY/endY 관계를 고려
+            let baseline: CanvasTextBaseline;
+            if (y1Raw < layout.topY) {
+              // startY가 차트 위로 벗어남 → 텍스트를 아래로
+              baseline = 'top';
+            } else if (y1Raw > layout.topY + layout.height) {
+              // startY가 차트 아래로 벗어남 → 텍스트를 위로
+              baseline = 'bottom';
+            } else {
+              // startY가 차트 내부 → 원래 로직대로
+              baseline = startY < endY ? 'top' : 'bottom';
+            }
+            
+            this.drawRangeEventLabel(event, labelX, labelY, eventColor, 'left', baseline);
+            
+            // 호버 체크
+            this.checkRangeEventHover(event, labelX, labelY);
+          }
+        }
       }
     });
 
@@ -1731,11 +2166,10 @@ export class OverlayStockChart {
 
       // X 값 계산
       const xTime = event.x;
-      const yValue = event.y;
       const eventChartKey = event.chartKey;
 
       // 디버그 로그
-      console.log(`Event: "${event.label}", xTime: ${xTime}, yValue: ${yValue}, chartKey: ${eventChartKey}`);
+      console.log(`Event: "${event.label}", xTime: ${xTime}, chartKey: ${eventChartKey}`);
 
       // X만 있음 (세로 라인)
       if (xTime >= minTime && xTime <= maxTime) {
@@ -1797,8 +2231,8 @@ export class OverlayStockChart {
           // 호버 시 툴팁 정보 저장 (나중에 그리기)
           const isHovered = this.hoveredEventMarker !== null && 
             this.hoveredEventMarker.label === event.label &&
-            this.hoveredEventMarker.x === event.x &&
-            this.hoveredEventMarker.y === event.y;
+            isXPointEvent(this.hoveredEventMarker) &&
+            this.hoveredEventMarker.x === event.x;
           if (isHovered) {
             this.eventTooltipsToRender.push({ event, x, y: labelY + 20, pointsDown: true });
           }
@@ -1821,11 +2255,10 @@ export class OverlayStockChart {
         eventColor = '#FF6600';
       }
 
-      const xTime = event.x;
       const yValue = event.y;
       const eventChartKey = event.chartKey;
 
-      console.log(`Event: "${event.label}", xTime: ${xTime}, yValue: ${yValue}, chartKey: ${eventChartKey}`);
+      console.log(`Event: "${event.label}", yValue: ${yValue}, chartKey: ${eventChartKey}`);
 
       // Y만 있음 (가로 라인)
       if (yValue !== undefined) {
@@ -1888,7 +2321,7 @@ export class OverlayStockChart {
             this.ctx.font = 'bold 11px Arial';
             this.ctx.textAlign = 'left';
             this.ctx.textBaseline = 'middle';
-            const labelX = this.chartAreaLeft + 5;
+            const labelX = this.chartAreaLeft;
             const textMetrics = this.ctx.measureText(labelText);
             this.ctx.fillText(labelText, labelX, y);
             
@@ -1903,7 +2336,7 @@ export class OverlayStockChart {
             // 호버 시 툴팁 표시
             const isHovered = this.hoveredEventMarker !== null && 
               this.hoveredEventMarker.label === event.label &&
-              this.hoveredEventMarker.x === event.x &&
+              isYPointEvent(this.hoveredEventMarker) &&
               this.hoveredEventMarker.y === event.y;
             if (isHovered) {
               this.eventTooltipsToRender.push({ event, x: labelX + textMetrics.width / 2, y, pointsDown: true });
@@ -1967,6 +2400,7 @@ export class OverlayStockChart {
                 // 이벤트 비교: label과 x, y 값으로 비교 (객체 참조가 다를 수 있음)
                 const isHovered = this.hoveredEventMarker !== null && 
                   this.hoveredEventMarker.label === event.label &&
+                  isXYPointEvent(this.hoveredEventMarker) &&
                   this.hoveredEventMarker.x === event.x &&
                   this.hoveredEventMarker.y === event.y;
                 
@@ -2104,34 +2538,96 @@ export class OverlayStockChart {
     // 서브 텍스트 (상세 정보) - X, Y 값 모두 표시
     const subTextParts: string[] = [];
     
-    // X 값 (시간) - 항상 표시
-    const xTime = event.x;
-    if (xTime !== undefined) {
-      const xFormatted = this.config.tooltipXFormat
-        ? this.config.tooltipXFormat(xTime, '', event.chartKey || '')
+    if (isXYRangeEvent(event)) {
+      // XY 범위 이벤트
+      const startXFormatted = this.config.tooltipXFormat
+        ? this.config.tooltipXFormat(event.startX, '', event.chartKey || '')
         : (this.config.xFormat 
-          ? this.config.xFormat(xTime, 0, 1, event.chartKey)
-          : new Date(xTime * 1000).toLocaleString());
-      subTextParts.push(`X: ${this.applyFormatResult(xFormatted)}`);
-    }
-    
-    // Y 값 - 항상 표시
-    const yValue = event.y;
-    if (yValue !== undefined) {
-      const yFormatted = this.config.tooltipYFormat
-        ? this.config.tooltipYFormat(yValue, event.chartKey || '', '')
+          ? this.config.xFormat(event.startX, 0, 1, event.chartKey)
+          : new Date(event.startX * 1000).toLocaleString());
+      const endXFormatted = this.config.tooltipXFormat
+        ? this.config.tooltipXFormat(event.endX, '', event.chartKey || '')
+        : (this.config.xFormat 
+          ? this.config.xFormat(event.endX, 0, 1, event.chartKey)
+          : new Date(event.endX * 1000).toLocaleString());
+      
+      subTextParts.push(`Period: ${this.applyFormatResult(startXFormatted)} ~ ${this.applyFormatResult(endXFormatted)}`);
+      
+      const startYFormatted = this.config.tooltipYFormat
+        ? this.config.tooltipYFormat(event.startY, event.chartKey || '', '')
         : (this.config.yFormat 
-          ? this.config.yFormat(yValue, 0, 1, event.chartKey)
-          : yValue.toLocaleString());
-      subTextParts.push(`Y: ${this.applyFormatResult(yFormatted)}`);
-    }
-    
-    // Chart Key
-    if (event.chartKey) {
-      const chartLabel = this.config.labelFormat
-        ? this.applyFormatResult(this.config.labelFormat(event.chartKey))
-        : event.chartKey;
-      subTextParts.push(`Chart: ${chartLabel}`);
+          ? this.config.yFormat(event.startY, 0, 1, event.chartKey)
+          : event.startY.toLocaleString());
+      const endYFormatted = this.config.tooltipYFormat
+        ? this.config.tooltipYFormat(event.endY, event.chartKey || '', '')
+        : (this.config.yFormat 
+          ? this.config.yFormat(event.endY, 0, 1, event.chartKey)
+          : event.endY.toLocaleString());
+      
+      subTextParts.push(`Range: ${this.applyFormatResult(startYFormatted)} ~ ${this.applyFormatResult(endYFormatted)}`);
+    } else if (isXRangeEvent(event)) {
+      // X 범위 이벤트
+      const startXFormatted = this.config.tooltipXFormat
+        ? this.config.tooltipXFormat(event.startX, '', event.chartKey || '')
+        : (this.config.xFormat 
+          ? this.config.xFormat(event.startX, 0, 1, event.chartKey)
+          : new Date(event.startX * 1000).toLocaleString());
+      const endXFormatted = this.config.tooltipXFormat
+        ? this.config.tooltipXFormat(event.endX, '', event.chartKey || '')
+        : (this.config.xFormat 
+          ? this.config.xFormat(event.endX, 0, 1, event.chartKey)
+          : new Date(event.endX * 1000).toLocaleString());
+      
+      subTextParts.push(`Period: ${this.applyFormatResult(startXFormatted)} ~ ${this.applyFormatResult(endXFormatted)}`);
+    } else if (isYRangeEvent(event)) {
+      // Y 범위 이벤트
+      const startYFormatted = this.config.tooltipYFormat
+        ? this.config.tooltipYFormat(event.startY, event.chartKey || '', '')
+        : (this.config.yFormat 
+          ? this.config.yFormat(event.startY, 0, 1, event.chartKey)
+          : event.startY.toLocaleString());
+      const endYFormatted = this.config.tooltipYFormat
+        ? this.config.tooltipYFormat(event.endY, event.chartKey || '', '')
+        : (this.config.yFormat 
+          ? this.config.yFormat(event.endY, 0, 1, event.chartKey)
+          : event.endY.toLocaleString());
+      
+      subTextParts.push(`Range: ${this.applyFormatResult(startYFormatted)} ~ ${this.applyFormatResult(endYFormatted)}`);
+    } else {
+      // 포인트 이벤트
+      // chartKey를 먼저 추출 (타입 가드 전에)
+      const eventWithMeta = event as EventMarker & { chartKey?: string };
+      const chartKey = eventWithMeta.chartKey;
+      
+      // X 값 (시간) - X 또는 XY 포인트 이벤트인 경우 표시
+      if ((isXPointEvent(event) || isXYPointEvent(event)) && event.x !== undefined) {
+        const xTime = event.x;
+        const xFormatted = this.config.tooltipXFormat
+          ? this.config.tooltipXFormat(xTime, '', chartKey || '')
+          : (this.config.xFormat 
+            ? this.config.xFormat(xTime, 0, 1, chartKey)
+            : new Date(xTime * 1000).toLocaleString());
+        subTextParts.push(`X: ${this.applyFormatResult(xFormatted)}`);
+      }
+      
+      // Y 값 - Y 또는 XY 포인트 이벤트인 경우 표시
+      if ((isYPointEvent(event) || isXYPointEvent(event)) && event.y !== undefined) {
+        const yValue = event.y;
+        const yFormatted = this.config.tooltipYFormat
+          ? this.config.tooltipYFormat(yValue, chartKey || '', '')
+          : (this.config.yFormat 
+            ? this.config.yFormat(yValue, 0, 1, chartKey)
+            : yValue.toLocaleString());
+        subTextParts.push(`Y: ${this.applyFormatResult(yFormatted)}`);
+      }
+      
+      // Chart Key
+      if (chartKey) {
+        const chartLabel = this.config.labelFormat
+          ? this.applyFormatResult(this.config.labelFormat(chartKey))
+          : chartKey;
+        subTextParts.push(`Chart: ${chartLabel}`);
+      }
     }
     
     const subText = subTextParts.length > 0 ? subTextParts.join(' | ') : '';
