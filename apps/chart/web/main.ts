@@ -8,7 +8,6 @@ type ChartData = {
   yLow?: number | null;
   y: number;
 };
-
 const statusTextEl = document.getElementById('status-text');
 const toggleEventsEl = document.getElementById('toggle-events') as HTMLInputElement | null;
 const toggleCandlesEl = document.getElementById('toggle-candles') as HTMLInputElement | null;
