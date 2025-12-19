@@ -19,8 +19,8 @@ const bitUsdTicker = 'BTC-USD';
 const ethereumUsdTicker = 'ETH-USD';
 const xrpUsdTicker = 'XRP-USD';
 // 기본 심볼 목록 (stock-diff와 동일)
-const symbols = [bitUsdTicker, ethereumUsdTicker, xrpUsdTicker];
-// const symbols = [goldTicker, oracleTicker,nebiusTicker, coreWeaveTicker, irenTicker];
+// const symbols = [bitUsdTicker, ethereumUsdTicker, xrpUsdTicker];
+const symbols = [oracleTicker,nebiusTicker, coreWeaveTicker, irenTicker];
 
 // 날짜 범위 (stock-diff와 동일)
 const from = '2025-02-01';
@@ -46,11 +46,27 @@ async function main() {
 
   // 이벤트를 티커별로 분류 (label에 티커명이 포함되어 있으면 해당 티커에 할당)
   allEvents.forEach(event => {
+    // timestamp를 x (number)로 변환
+    const convertedEvent = {
+      ...event,
+      x: event.timestamp ? new Date(event.timestamp).getTime() / 1000 : undefined,
+      timestamp: undefined // timestamp 필드 제거
+    };
+    
+    // undefined 필드 제거
+    Object.keys(convertedEvent).forEach(key => {
+      // @ts-ignore
+      if (convertedEvent[key] === undefined) {
+        // @ts-ignore
+        delete convertedEvent[key];
+      }
+    });
+    
     let assigned = false;
     symbols.forEach(ticker => {
       // 이벤트 label에 티커명이 포함되어 있는지 확인
       if (event.label && event.label.includes(ticker)) {
-        eventsByTicker.get(ticker)?.push(event);
+        eventsByTicker.get(ticker)?.push(convertedEvent);
         assigned = true;
       }
     });
@@ -58,7 +74,7 @@ async function main() {
     // 특정 티커에 할당되지 않은 이벤트는 모든 티커에 추가
     if (!assigned) {
       symbols.forEach(ticker => {
-        eventsByTicker.get(ticker)?.push(event);
+        eventsByTicker.get(ticker)?.push(convertedEvent);
       });
     }
   });

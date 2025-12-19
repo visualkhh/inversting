@@ -260,6 +260,7 @@ let rangeMax = 100;
     return;
   }
 
+  console.log('-->', currentData.commonEvents)
   // OverlayStockChart 초기화
   overlayChart = new OverlayStockChart(
     canvas, 
