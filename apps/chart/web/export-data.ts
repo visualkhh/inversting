@@ -90,7 +90,7 @@ async function main() {
 
   // 티커별로 이벤트 파일 생성
   eventsByTicker.forEach((events, ticker) => {
-    const eventsPath = path.join(outDir, `${ticker}_events.json`);
+    const eventsPath = path.join(outDir, `${ticker}_price_events.json`);
     writeFileSync(eventsPath, JSON.stringify(events, null, 2), 'utf-8');
     console.log(`Saved: ${eventsPath} (${events.length} events)`);
   });

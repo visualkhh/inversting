@@ -201,7 +201,29 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
           try {
             const eventsResp = await fetch(`data/${ticker}_${chartKey}_events.json`);
             if (eventsResp.ok) {
-              newData[chartKey].events = await eventsResp.json() as EventMarker[];
+              const rawEvents = await eventsResp.json() as any[];
+              // 문자열 timestamp를 숫자로 변환
+              newData[chartKey].events = rawEvents.map(event => {
+                const converted: any = { ...event };
+                // x, startX, endX 등의 timestamp 필드를 숫자로 변환
+                if (typeof converted.x === 'string') {
+                  converted.x = new Date(converted.x).getTime();
+                }
+                if (typeof converted.startX === 'string') {
+                  converted.startX = new Date(converted.startX).getTime();
+                }
+                if (typeof converted.endX === 'string') {
+                  converted.endX = new Date(converted.endX).getTime();
+                }
+                // points 배열의 x 값도 변환
+                if (converted.points && Array.isArray(converted.points)) {
+                  converted.points = converted.points.map((p: any) => ({
+                    ...p,
+                    x: typeof p.x === 'string' ? new Date(p.x).getTime() : p.x
+                  }));
+                }
+                return converted as EventMarker;
+              });
             }
           } catch (err) {
             // 이벤트 파일이 없으면 무시
@@ -234,7 +256,29 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
       try {
         const eventsResp = await fetch(`data/${chartKey}_events.json`);
         if (eventsResp.ok) {
-          commonEvents[chartKey] = await eventsResp.json() as EventMarker[];
+          const rawEvents = await eventsResp.json() as any[];
+          // 문자열 timestamp를 숫자로 변환
+          commonEvents[chartKey] = rawEvents.map(event => {
+            const converted: any = { ...event };
+            // x, startX, endX 등의 timestamp 필드를 숫자로 변환
+            if (typeof converted.x === 'string') {
+              converted.x = new Date(converted.x).getTime();
+            }
+            if (typeof converted.startX === 'string') {
+              converted.startX = new Date(converted.startX).getTime();
+            }
+            if (typeof converted.endX === 'string') {
+              converted.endX = new Date(converted.endX).getTime();
+            }
+            // points 배열의 x 값도 변환
+            if (converted.points && Array.isArray(converted.points)) {
+              converted.points = converted.points.map((p: any) => ({
+                ...p,
+                x: typeof p.x === 'string' ? new Date(p.x).getTime() : p.x
+              }));
+            }
+            return converted as EventMarker;
+          });
           console.log(`Loaded ${commonEvents[chartKey].length} events for ${chartKey}`);
         }
       } catch (err) {

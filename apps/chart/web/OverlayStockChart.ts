@@ -119,6 +119,12 @@ interface DrawArea {
   height: number; // 높이
 }
 
+// 공통 이벤트 타입 정의
+type CommonEvents = {
+  x?: (XPointEvent & EventBase)[]; // 모든 차트의 X축에 표시될 공통 세로선 이벤트
+  chart?: { [key: string]: EventMarker[] }; // 차트별 이벤트
+};
+
 interface ChartOptions {
   showEvents?: boolean;
   showCandles?: boolean;
@@ -2049,6 +2055,19 @@ export class OverlayStockChart {
 
       // X만 있음 (세로 라인)
       if (xTime >= minTime && xTime <= maxTime) {
+          // chartKey가 지정된 경우 해당 차트 영역만 찾기
+          const chartKey = eventChartKey || this.state.visibleChartKeys[0];
+          
+          // 해당 차트가 보이지 않으면 그리지 않음
+          if (!this.state.visibleChartKeys.includes(chartKey)) {
+            return;
+          }
+          
+          const area = chartAreas.find(a => a.key === chartKey);
+          if (!area) {
+            return;
+          }
+          
           const x = this.getX(xTime, minTime, maxTime);
           
           // 스타일 적용
@@ -2068,12 +2087,13 @@ export class OverlayStockChart {
               : this.config.eventXLineDash)
             : [];
           
+          // 해당 차트 영역에만 세로선 그리기
           this.ctx.strokeStyle = strokeStyle;
           this.ctx.lineWidth = lineWidth;
           this.ctx.setLineDash(lineDash);
           this.ctx.beginPath();
-          this.ctx.moveTo(x, this.padding);
-          this.ctx.lineTo(x, chartBottom);
+          this.ctx.moveTo(x, area.y);
+          this.ctx.lineTo(x, area.y + area.height);
           this.ctx.stroke();
           this.ctx.setLineDash([]);
 
@@ -2084,7 +2104,7 @@ export class OverlayStockChart {
           const labelText = this.applyFormatResult(labelFormatted);
 
           // 레이블 위치 계산 (90도 회전하여 가로로 눕힘, 차트 안쪽에 표시)
-          const labelY = chartAreas[0].y; // 차트 영역 안쪽
+          const labelY = area.y; // 해당 차트 영역 안쪽
           this.ctx.save();
           this.ctx.translate(x, labelY);
           this.ctx.rotate(Math.PI / 2); // 90도 시계방향 회전 (가로로 눕힘)
@@ -2097,13 +2117,13 @@ export class OverlayStockChart {
           this.ctx.restore();
           
           // 호버 가능한 영역 저장 (세로 라인 영역 - 좁은 폭)
-          // 세로 라인이므로 X축 방향으로는 좁게, Y축 방향으로는 차트 전체 높이로 설정
+          // 세로 라인이므로 X축 방향으로는 좁게, Y축 방향으로는 해당 차트 높이로 설정
           const labelWidth = textMetrics.width;
           const lineHitWidth = 10; // 세로 라인 클릭 가능 영역 폭 (좌우 5px씩)
           this.eventMarkers.push({ 
             event,
             x: x, 
-            y: (this.padding + chartBottom) / 2, // 차트 중앙
+            y: area.y + area.height / 2, // 해당 차트 중앙
             radius: lineHitWidth / 2 // 좁은 폭으로 설정
           });
           
