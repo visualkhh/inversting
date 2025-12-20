@@ -48,13 +48,30 @@ interface XYRangeEvent {
   endY: number; // 종료 Y축 값
 }
 
+// 포인트 타입 (화살표 방향 등)
+type PointType = 'dot' | 'leftArrow' | 'rightArrow' | 'leftArrowDot' | 'rightArrowDot' | 'leftArrowLine' | 'rightArrowLine';
+
+// 다중 포인트 이벤트 (여러 점을 연결하여 도형 그리기)
+interface PointEvent {
+  points: {
+    x: number; // X축 값 (Unix timestamp in milliseconds)
+    y: number; // Y축 값
+    xPointType?: PointType; // X축 포인트 타입
+    yPointType?: PointType; // Y축 포인트 타입
+  }[];
+  fillStyle?: string; // 채우기 색상 (있으면 closePath + fill 처리)
+  strokeStyle?: string; // 선 색상
+  smooth?: boolean; // 부드러운 곡선 여부
+}
+
 type EventMarker = 
   | (XPointEvent & EventBase)
   | (YPointEvent & EventBase)
   | (XYPointEvent & EventBase)
   | (XRangeEvent & EventBase)
   | (YRangeEvent & EventBase)
-  | (XYRangeEvent & EventBase);
+  | (XYRangeEvent & EventBase)
+  | (PointEvent & EventBase);
 
 // 타입 가드 함수
 function isXPointEvent(event: EventMarker): event is XPointEvent & EventBase {
@@ -66,27 +83,31 @@ function isYPointEvent(event: EventMarker): event is YPointEvent & EventBase {
 }
 
 function isXYPointEvent(event: EventMarker): event is XYPointEvent & EventBase {
-  return 'x' in event && 'y' in event && !('startX' in event) && !('startY' in event);
+  return 'x' in event && 'y' in event && !('startX' in event) && !('startY' in event) && !('points' in event);
 }
 
 function isXRangeEvent(event: EventMarker): event is XRangeEvent & EventBase {
-  return 'startX' in event && 'endX' in event && !('startY' in event) && !('endY' in event);
+  return 'startX' in event && 'endX' in event && !('startY' in event) && !('endY' in event) && !('points' in event);
 }
 
 function isYRangeEvent(event: EventMarker): event is YRangeEvent & EventBase {
-  return 'startY' in event && 'endY' in event && !('startX' in event) && !('endX' in event);
+  return 'startY' in event && 'endY' in event && !('startX' in event) && !('endX' in event) && !('points' in event);
 }
 
 function isXYRangeEvent(event: EventMarker): event is XYRangeEvent & EventBase {
-  return 'startX' in event && 'endX' in event && 'startY' in event && 'endY' in event;
+  return 'startX' in event && 'endX' in event && 'startY' in event && 'endY' in event && !('points' in event);
 }
 
 function isRangeEvent(event: EventMarker): event is (XRangeEvent | YRangeEvent | XYRangeEvent) & EventBase {
   return isXRangeEvent(event) || isYRangeEvent(event) || isXYRangeEvent(event);
 }
 
+function isMultiPointEvent(event: EventMarker): event is PointEvent & EventBase {
+  return 'points' in event && Array.isArray((event as any).points);
+}
+
 function isPointEvent(event: EventMarker): event is (XPointEvent | YPointEvent | XYPointEvent) & EventBase {
-  return !isRangeEvent(event);
+  return !isRangeEvent(event) && !isMultiPointEvent(event);
 }
 
 interface ChartOptions {
@@ -979,689 +1000,6 @@ export class OverlayStockChart {
     }
   }
 
-  drawVolume(
-    visibleTickers: Set<string>,
-    volumeTopY: number,
-    volumeHeight: number,
-    sortedTimes: number[],
-    options: ChartOptions = {}
-  ) {
-    const {
-      showCandles = false,
-      fillGaps = false,
-      smoothMode = 'none',
-      showAverage = false,
-      hideValues = false,
-      hideLines = false,
-      showGrid = false,
-      displayMinTime,
-      displayMaxTime
-    } = options;
-
-    if (sortedTimes.length === 0) return;
-
-    const minTime = displayMinTime ?? sortedTimes[0];
-    const maxTime = displayMaxTime ?? sortedTimes[sortedTimes.length - 1];
-    const timeRange = maxTime - minTime || 1;
-
-    // 배경
-    this.ctx.fillStyle = '#FFFFFF';
-    this.ctx.fillRect(0, volumeTopY, this.width, volumeHeight);
-
-    // 그리드
-    if (showGrid) {
-      this.drawGrid(volumeTopY, volumeHeight);
-    }
-
-    // Y축
-    this.drawYAxis(volumeTopY, volumeTopY + volumeHeight);
-
-    // 하단 X축
-    this.ctx.strokeStyle = '#000000';
-    this.ctx.lineWidth = 2;
-    this.ctx.beginPath();
-    this.ctx.moveTo(this.chartAreaLeft, volumeTopY + volumeHeight);
-    this.ctx.lineTo(this.getChartRight(), volumeTopY + volumeHeight);
-    this.ctx.stroke();
-
-    // 각 티커별 볼륨 min/max 계산
-    const volumeMinMaxBySymbol = new Map<string, { min: number; max: number }>();
-    
-    if (this.state.normalize) {
-      // 정규화: 각 티커별로 min/max 계산
-      this.dataMap.forEach((value, symbol) => {
-        const volumeData = value.data['volume'] || [];
-        const volumes = volumeData.map(d => d.y).filter(v => v !== null && v !== undefined);
-        if (volumes.length > 0) {
-          volumeMinMaxBySymbol.set(symbol, {
-            min: Math.min(...volumes),
-            max: Math.max(...volumes)
-          });
-        }
-      });
-    } else {
-      // 정규화 안함: 모든 티커의 전체 min/max 사용
-      let globalMin = Infinity;
-      let globalMax = -Infinity;
-      
-      this.dataMap.forEach((value) => {
-        const volumeData = value.data['volume'] || [];
-        const volumes = volumeData.map(d => d.y).filter(v => v !== null && v !== undefined);
-        if (volumes.length > 0) {
-          globalMin = Math.min(globalMin, ...volumes);
-          globalMax = Math.max(globalMax, ...volumes);
-        }
-      });
-      
-      // 모든 티커에 동일한 min/max 적용
-      this.dataMap.forEach((_, symbol) => {
-        volumeMinMaxBySymbol.set(symbol, {
-          min: globalMin,
-          max: globalMax
-        });
-      });
-    }
-
-    // Volume 렌더링
-    this.dataMap.forEach((value, symbol) => {
-      const minMax = volumeMinMaxBySymbol.get(symbol);
-      if (!minMax || !visibleTickers.has(symbol)) {
-        return;
-      }
-
-      const data = value.data['volume'] || [];
-      const color = this.getTickerColor(symbol);
-
-      // 캔들 그리기
-      if (showCandles) {
-        const candlePoints: { time: number; open: number; high: number; low: number; close: number }[] = [];
-        data.forEach(d => {
-          if (d.y !== null && d.y !== undefined) {
-            // yOpen, yHigh, yLow가 모두 유효한 경우에만 캔들 포인트 추가
-            const hasOHLC = d.yOpen !== null && d.yOpen !== undefined &&
-                            d.yHigh !== null && d.yHigh !== undefined &&
-                            d.yLow !== null && d.yLow !== undefined;
-            
-            if (hasOHLC) {
-              candlePoints.push({
-                time: d.x,
-                open: d.yOpen!,
-                high: d.yHigh!,
-                low: d.yLow!,
-                close: d.y
-              });
-            }
-          }
-        });
-        if (candlePoints.length > 0) {
-          this.drawCandles(candlePoints, minMax, color, minTime, maxTime, volumeTopY, volumeHeight);
-        }
-      }
-
-      if (!hideLines) {
-        this.ctx.save();
-        this.ctx.beginPath();
-        this.ctx.rect(this.chartAreaLeft, volumeTopY, this.chartAreaWidth, volumeHeight);
-        this.ctx.clip();
-
-        this.ctx.strokeStyle = color;
-        this.ctx.lineWidth = 1;
-        this.ctx.lineJoin = 'round';
-        this.ctx.lineCap = 'round';
-
-        const avgTimeDiff = timeRange / sortedTimes.length;
-        let prevValidIndex = -1;
-
-        for (let i = 0; i < data.length; i++) {
-          const time = data[i].x;
-          const volume = data[i].y || 0;
-          const x = this.getX(time, minTime, maxTime);
-          const y = this.getY(volume, minMax.min, minMax.max, volumeTopY, volumeHeight);
-          const hasData = volume > 0;
-
-          if (prevValidIndex === -1) {
-            this.ctx.beginPath();
-            this.ctx.moveTo(x, y);
-            prevValidIndex = i;
-          } else {
-            const prevTime = data[prevValidIndex].x;
-            const timeDiff = time - prevTime;
-            const prevVolume = data[prevValidIndex].y || 0;
-            const hasTimeGap = timeDiff > avgTimeDiff * 2;
-            const hasDataGap = !hasData || prevVolume <= 0;
-
-            if (fillGaps) {
-              if (smoothMode !== 'none') {
-                const prevX = this.getX(prevTime, minTime, maxTime);
-                const prevY = this.getY(prevVolume, minMax.min, minMax.max, volumeTopY, volumeHeight);
-                const cp1x = prevX + (x - prevX) / 3;
-                const cp1y = prevY;
-                const cp2x = prevX + (x - prevX) * 2 / 3;
-                const cp2y = y;
-                this.ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
-              } else {
-                this.ctx.lineTo(x, y);
-              }
-            } else {
-              if (hasTimeGap || hasDataGap) {
-                this.ctx.stroke();
-                this.ctx.beginPath();
-                this.ctx.setLineDash([5, 5]);
-                const prevX = this.getX(prevTime, minTime, maxTime);
-                const prevY = this.getY(prevVolume, minMax.min, minMax.max, volumeTopY, volumeHeight);
-                this.ctx.moveTo(prevX, prevY);
-
-                if (smoothMode !== 'none') {
-                  const cp1x = prevX + (x - prevX) / 3;
-                  const cp1y = prevY;
-                  const cp2x = prevX + (x - prevX) * 2 / 3;
-                  const cp2y = y;
-                  this.ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
-                } else {
-                  this.ctx.lineTo(x, y);
-                }
-
-                this.ctx.stroke();
-                this.ctx.setLineDash([]);
-                this.ctx.beginPath();
-                this.ctx.moveTo(x, y);
-              } else {
-                if (smoothMode !== 'none') {
-                  const prevX = this.getX(prevTime, minTime, maxTime);
-                  const prevY = this.getY(prevVolume, minMax.min, minMax.max, volumeTopY, volumeHeight);
-                  const cp1x = prevX + (x - prevX) / 3;
-                  const cp1y = prevY;
-                  const cp2x = prevX + (x - prevX) * 2 / 3;
-                  const cp2y = y;
-                  this.ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
-                } else {
-                  this.ctx.lineTo(x, y);
-                }
-              }
-            }
-            prevValidIndex = i;
-          }
-        }
-
-        this.ctx.stroke();
-        this.ctx.setLineDash([]);
-        this.ctx.restore();
-      }
-    });
-
-    // Y축 레이블
-    if (!hideValues) {
-      // 전체 min/max 계산 (비정규화 모드용)
-      let globalMin = Infinity;
-      let globalMax = -Infinity;
-      volumeMinMaxBySymbol.forEach((minMax) => {
-        globalMin = Math.min(globalMin, minMax.min);
-        globalMax = Math.max(globalMax, minMax.max);
-      });
-      this.drawYAxisLabels(volumeTopY, volumeHeight, volumeTopY + volumeHeight, globalMin, globalMax, 'volume');
-    }
-
-    // 'Volume' 세로 텍스트
-    this.drawYAxisTitle('Volume', volumeTopY, volumeTopY + volumeHeight);
-
-    // 평균선
-    if (showAverage && this.dataMap.size > 0) {
-      this.drawVolumeAverageLine(volumeMinMaxBySymbol, sortedTimes, minTime, maxTime, volumeTopY, volumeHeight, smoothMode);
-    }
-  }
-
-  private drawVolumeAverageLine(
-    minMaxBySymbol: Map<string, { min: number; max: number }>,
-    sortedTimes: number[],
-    minTime: number,
-    maxTime: number,
-    topY: number,
-    height: number,
-    smoothMode: string
-  ) {
-    const avgPoints: { time: number; avgY: number }[] = [];
-
-    sortedTimes.forEach(time => {
-      const yValues: number[] = [];
-
-      this.dataMap.forEach((value, symbol) => {
-        const minMax = minMaxBySymbol.get(symbol);
-        if (!minMax) return;
-
-        const data = value.data['volume'] || [];
-        let volumeValue: number | null = null;
-        const exactData = data.find(d => d.x === time);
-        
-        if (exactData && exactData.y) {
-          volumeValue = exactData.y;
-        } else {
-          let prevData = null;
-          let nextData = null;
-
-          for (let i = 0; i < data.length; i++) {
-            const t = data[i].x;
-            if (t < time) {
-              prevData = data[i];
-            } else if (t > time) {
-              nextData = data[i];
-              break;
-            }
-          }
-
-          if (prevData && nextData && prevData.y && nextData.y) {
-            const prevTime = prevData.x;
-            const nextTime = nextData.x;
-            const ratio = (time - prevTime) / (nextTime - prevTime);
-            volumeValue = prevData.y + (nextData.y - prevData.y) * ratio;
-          } else if (prevData && prevData.y) {
-            volumeValue = prevData.y;
-          } else if (nextData && nextData.y) {
-            volumeValue = nextData.y;
-          }
-        }
-
-        if (volumeValue !== null && volumeValue !== undefined) {
-          const yCoord = this.getY(volumeValue, minMax.min, minMax.max, topY, height);
-          yValues.push(yCoord);
-        }
-      });
-
-      if (yValues.length > 0) {
-        const avgY = yValues.reduce((sum, y) => sum + y, 0) / yValues.length;
-        avgPoints.push({ time, avgY });
-      }
-    });
-
-    if (avgPoints.length > 0) {
-      this.ctx.save();
-      this.ctx.beginPath();
-      this.ctx.rect(this.chartAreaLeft, topY, this.chartAreaWidth, height);
-      this.ctx.clip();
-
-      this.ctx.strokeStyle = '#000000';
-      this.ctx.lineWidth = 2;
-      this.ctx.setLineDash([3, 2]);
-      this.ctx.globalAlpha = 1.0;
-
-      this.ctx.beginPath();
-      avgPoints.forEach((point, i) => {
-        const x = this.getX(point.time, minTime, maxTime);
-        const y = point.avgY;
-
-        if (i === 0) {
-          this.ctx.moveTo(x, y);
-        } else if (smoothMode !== 'none' && i > 0) {
-          const prevPoint = avgPoints[i - 1];
-          const prevX = this.getX(prevPoint.time, minTime, maxTime);
-          const prevY = prevPoint.avgY;
-          const cp1x = prevX + (x - prevX) / 3;
-          const cp1y = prevY;
-          const cp2x = prevX + (x - prevX) * 2 / 3;
-          const cp2y = y;
-          this.ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
-        } else {
-          this.ctx.lineTo(x, y);
-        }
-      });
-      this.ctx.stroke();
-
-      this.ctx.setLineDash([]);
-      this.ctx.globalAlpha = 1.0;
-      this.ctx.restore();
-    }
-  }
-
-  drawOBV(
-    visibleTickers: Set<string>,
-    obvTopY: number,
-    obvHeight: number,
-    sortedTimes: number[],
-    options: ChartOptions = {}
-  ) {
-    const {
-      showCandles = false,
-      fillGaps = false,
-      smoothMode = 'none',
-      showAverage = false,
-      hideValues = false,
-      hideLines = false,
-      showGrid = false,
-      displayMinTime,
-      displayMaxTime
-    } = options;
-
-    if (sortedTimes.length === 0) return;
-
-    const minTime = displayMinTime ?? sortedTimes[0];
-    const maxTime = displayMaxTime ?? sortedTimes[sortedTimes.length - 1];
-    const timeRange = maxTime - minTime || 1;
-
-    // 배경
-    this.ctx.fillStyle = '#FFFFFF';
-    this.ctx.fillRect(0, obvTopY, this.width, obvHeight);
-
-    // 그리드
-    if (showGrid) {
-      this.drawGrid(obvTopY, obvHeight);
-    }
-
-    // Y축
-    this.drawYAxis(obvTopY, obvTopY + obvHeight);
-
-    // 하단 X축
-    this.ctx.strokeStyle = '#000000';
-    this.ctx.lineWidth = 2;
-    this.ctx.beginPath();
-    this.ctx.moveTo(this.chartAreaLeft, obvTopY + obvHeight);
-    this.ctx.lineTo(this.getChartRight(), obvTopY + obvHeight);
-    this.ctx.stroke();
-
-    // 각 티커별 OBV min/max 계산
-    const obvMinMaxBySymbol = new Map<string, { min: number; max: number; values: number[] }>();
-    
-    if (this.state.normalize) {
-      // 정규화: 각 티커별로 min/max 계산
-      this.dataMap.forEach((value, symbol) => {
-        const obvData = value.data['obv'] || [];
-        const obvValues = obvData.map(d => d.y).filter(v => v !== null && v !== undefined);
-        
-        if (obvValues.length > 0) {
-          obvMinMaxBySymbol.set(symbol, {
-            min: Math.min(...obvValues),
-            max: Math.max(...obvValues),
-            values: obvValues
-          });
-        }
-      });
-    } else {
-      // 정규화 안함: 모든 티커의 전체 min/max 사용
-      let globalMin = Infinity;
-      let globalMax = -Infinity;
-      
-      this.dataMap.forEach((value) => {
-        const obvData = value.data['obv'] || [];
-        const obvValues = obvData.map(d => d.y).filter(v => v !== null && v !== undefined);
-        if (obvValues.length > 0) {
-          globalMin = Math.min(globalMin, ...obvValues);
-          globalMax = Math.max(globalMax, ...obvValues);
-        }
-      });
-      
-      // 모든 티커에 동일한 min/max 적용
-      this.dataMap.forEach((value, symbol) => {
-        const obvData = value.data['obv'] || [];
-        const obvValues = obvData.map(d => d.y).filter(v => v !== null && v !== undefined);
-        obvMinMaxBySymbol.set(symbol, {
-          min: globalMin,
-          max: globalMax,
-          values: obvValues
-        });
-      });
-    }
-
-    // OBV 렌더링
-    this.dataMap.forEach((value, symbol) => {
-      const obvDataInfo = obvMinMaxBySymbol.get(symbol);
-      if (!obvDataInfo || !visibleTickers.has(symbol)) {
-        return;
-      }
-
-      const data = value.data['obv'] || [];
-      const obvValues = obvDataInfo.values;
-      const minMax = { min: obvDataInfo.min, max: obvDataInfo.max };
-      const color = this.getTickerColor(symbol);
-
-      // 캔들 그리기
-      if (showCandles) {
-        const candlePoints: { time: number; open: number; high: number; low: number; close: number }[] = [];
-        data.forEach((d, i) => {
-          if (i < obvValues.length) {
-            // yOpen, yHigh, yLow가 모두 유효한 경우에만 캔들 포인트 추가
-            const hasOHLC = d.yOpen !== null && d.yOpen !== undefined &&
-                            d.yHigh !== null && d.yHigh !== undefined &&
-                            d.yLow !== null && d.yLow !== undefined;
-            
-            if (hasOHLC) {
-              candlePoints.push({
-                time: d.x,
-                open: d.yOpen!,
-                high: d.yHigh!,
-                low: d.yLow!,
-                close: obvValues[i]
-              });
-            }
-          }
-        });
-        if (candlePoints.length > 0) {
-          this.drawCandles(candlePoints, minMax, color, minTime, maxTime, obvTopY, obvHeight);
-        }
-      }
-
-      if (!hideLines) {
-        this.ctx.save();
-        this.ctx.beginPath();
-        this.ctx.rect(this.chartAreaLeft, obvTopY, this.chartAreaWidth, obvHeight);
-        this.ctx.clip();
-
-        this.ctx.strokeStyle = color;
-        this.ctx.lineWidth = 1;
-        this.ctx.lineJoin = 'round';
-        this.ctx.lineCap = 'round';
-
-        const avgTimeDiff = timeRange / sortedTimes.length;
-        let prevValidIndex = -1;
-
-        for (let i = 0; i < data.length; i++) {
-          const time = data[i].x;
-          const x = this.getX(time, minTime, maxTime);
-          const y = this.getY(obvValues[i], minMax.min, minMax.max, obvTopY, obvHeight);
-          const hasData = obvValues[i] !== 0;
-
-          if (prevValidIndex === -1) {
-            this.ctx.beginPath();
-            this.ctx.moveTo(x, y);
-            prevValidIndex = i;
-          } else {
-            const prevTime = data[prevValidIndex].x;
-            const timeDiff = time - prevTime;
-            const prevVolume = data[prevValidIndex].y || 0;
-            const hasTimeGap = timeDiff > avgTimeDiff * 2;
-            const hasDataGap = !hasData || prevVolume <= 0;
-
-            if (fillGaps) {
-              if (smoothMode !== 'none') {
-                const prevX = this.getX(prevTime, minTime, maxTime);
-                const prevY = this.getY(obvValues[prevValidIndex], minMax.min, minMax.max, obvTopY, obvHeight);
-                const cp1x = prevX + (x - prevX) / 3;
-                const cp1y = prevY;
-                const cp2x = prevX + (x - prevX) * 2 / 3;
-                const cp2y = y;
-                this.ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
-              } else {
-                this.ctx.lineTo(x, y);
-              }
-            } else {
-              if (hasTimeGap || hasDataGap) {
-                this.ctx.stroke();
-                this.ctx.beginPath();
-                this.ctx.setLineDash([5, 5]);
-                const prevX = this.getX(prevTime, minTime, maxTime);
-                const prevY = this.getY(obvValues[prevValidIndex], minMax.min, minMax.max, obvTopY, obvHeight);
-                this.ctx.moveTo(prevX, prevY);
-
-                if (smoothMode !== 'none') {
-                  const cp1x = prevX + (x - prevX) / 3;
-                  const cp1y = prevY;
-                  const cp2x = prevX + (x - prevX) * 2 / 3;
-                  const cp2y = y;
-                  this.ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
-                } else {
-                  this.ctx.lineTo(x, y);
-                }
-
-                this.ctx.stroke();
-                this.ctx.setLineDash([]);
-                this.ctx.beginPath();
-                this.ctx.moveTo(x, y);
-              } else {
-                if (smoothMode !== 'none') {
-                  const prevX = this.getX(prevTime, minTime, maxTime);
-                  const prevY = this.getY(obvValues[prevValidIndex], minMax.min, minMax.max, obvTopY, obvHeight);
-                  const cp1x = prevX + (x - prevX) / 3;
-                  const cp1y = prevY;
-                  const cp2x = prevX + (x - prevX) * 2 / 3;
-                  const cp2y = y;
-                  this.ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
-                } else {
-                  this.ctx.lineTo(x, y);
-                }
-              }
-            }
-            prevValidIndex = i;
-          }
-        }
-
-        this.ctx.stroke();
-        this.ctx.setLineDash([]);
-        this.ctx.restore();
-      }
-    });
-
-    // Y축 레이블
-    if (!hideValues) {
-      // 전체 min/max 계산 (비정규화 모드용)
-      let globalMin = Infinity;
-      let globalMax = -Infinity;
-      obvMinMaxBySymbol.forEach((obvData) => {
-        globalMin = Math.min(globalMin, obvData.min);
-        globalMax = Math.max(globalMax, obvData.max);
-      });
-      this.drawYAxisLabels(obvTopY, obvHeight, obvTopY + obvHeight, globalMin, globalMax, 'obv');
-    }
-
-    // 'OBV' 세로 텍스트
-    this.drawYAxisTitle('OBV', obvTopY, obvTopY + obvHeight);
-
-    // 평균선
-    if (showAverage && this.dataMap.size > 0) {
-      this.drawOBVAverageLine(obvMinMaxBySymbol, sortedTimes, minTime, maxTime, obvTopY, obvHeight, smoothMode);
-    }
-  }
-
-  private drawOBVAverageLine(
-    obvMinMaxBySymbol: Map<string, { min: number; max: number; values: number[] }>,
-    sortedTimes: number[],
-    minTime: number,
-    maxTime: number,
-    topY: number,
-    height: number,
-    smoothMode: string
-  ) {
-    const obvBySymbol = new Map<string, { time: number; obv: number }[]>();
-    const minMaxBySymbol = new Map<string, { min: number; max: number }>();
-
-    this.dataMap.forEach((value, symbol) => {
-      const obvDataInfo = obvMinMaxBySymbol.get(symbol);
-      if (!obvDataInfo) return;
-
-      const data = value.data['obv'] || [];
-      const points: { time: number; obv: number }[] = [];
-      data.forEach((d, i) => {
-        const time = d.x;
-        points.push({ time, obv: obvDataInfo.values[i] });
-      });
-      obvBySymbol.set(symbol, points);
-      minMaxBySymbol.set(symbol, { min: obvDataInfo.min, max: obvDataInfo.max });
-    });
-
-    const avgPoints: { time: number; avgY: number }[] = [];
-
-    sortedTimes.forEach(time => {
-      const yValues: number[] = [];
-
-      obvBySymbol.forEach((points, symbol) => {
-        const minMax = minMaxBySymbol.get(symbol);
-        if (!minMax) return;
-
-        let obvValue: number | null = null;
-        const exactPoint = points.find(p => p.time === time);
-
-        if (exactPoint) {
-          obvValue = exactPoint.obv;
-        } else {
-          let prevPoint = null;
-          let nextPoint = null;
-
-          for (let i = 0; i < points.length; i++) {
-            if (points[i].time < time) {
-              prevPoint = points[i];
-            } else if (points[i].time > time) {
-              nextPoint = points[i];
-              break;
-            }
-          }
-
-          if (prevPoint && nextPoint) {
-            const ratio = (time - prevPoint.time) / (nextPoint.time - prevPoint.time);
-            obvValue = prevPoint.obv + (nextPoint.obv - prevPoint.obv) * ratio;
-          } else if (prevPoint) {
-            obvValue = prevPoint.obv;
-          } else if (nextPoint) {
-            obvValue = nextPoint.obv;
-          }
-        }
-
-        if (obvValue !== null) {
-          const yCoord = this.getY(obvValue, minMax.min, minMax.max, topY, height);
-          yValues.push(yCoord);
-        }
-      });
-
-      if (yValues.length > 0) {
-        const avgY = yValues.reduce((sum, y) => sum + y, 0) / yValues.length;
-        avgPoints.push({ time, avgY });
-      }
-    });
-
-    if (avgPoints.length > 0) {
-      this.ctx.save();
-      this.ctx.beginPath();
-      this.ctx.rect(this.chartAreaLeft, topY, this.chartAreaWidth, height);
-      this.ctx.clip();
-
-      this.ctx.strokeStyle = '#000000';
-      this.ctx.lineWidth = 2;
-      this.ctx.setLineDash([3, 2]);
-      this.ctx.globalAlpha = 1.0;
-
-      this.ctx.beginPath();
-      avgPoints.forEach((point, i) => {
-        const x = this.getX(point.time, minTime, maxTime);
-        const y = point.avgY;
-
-        if (i === 0) {
-          this.ctx.moveTo(x, y);
-        } else if (smoothMode !== 'none' && i > 0) {
-          const prevPoint = avgPoints[i - 1];
-          const prevX = this.getX(prevPoint.time, minTime, maxTime);
-          const prevY = prevPoint.avgY;
-          const cp1x = prevX + (x - prevX) / 3;
-          const cp1y = prevY;
-          const cp2x = prevX + (x - prevX) * 2 / 3;
-          const cp2y = y;
-          this.ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
-        } else {
-          this.ctx.lineTo(x, y);
-        }
-      });
-      this.ctx.stroke();
-
-      this.ctx.setLineDash([]);
-      this.ctx.globalAlpha = 1.0;
-      this.ctx.restore();
-    }
-  }
-
   drawLegend(
     dataBySymbol: Map<string, any>,
     visibleTickers: Set<string>,
@@ -1844,10 +1182,13 @@ export class OverlayStockChart {
     const xOnlyEvents: Array<(XPointEvent & EventBase) & { symbol?: string; chartKey?: string }> = [];
     const yOnlyEvents: Array<(YPointEvent & EventBase) & { symbol?: string; chartKey?: string }> = [];
     const xyEvents: Array<(XYPointEvent & EventBase) & { symbol?: string; chartKey?: string }> = [];
+    const multiPointEvents: Array<(PointEvent & EventBase) & { symbol?: string; chartKey?: string }> = [];
     
     allEvents.forEach(event => {
       if (isRangeEvent(event)) {
         rangeEvents.push(event);
+      } else if (isMultiPointEvent(event)) {
+        multiPointEvents.push(event);
       } else if (isXPointEvent(event)) {
         xOnlyEvents.push(event);
       } else if (isYPointEvent(event)) {
@@ -2148,6 +1489,248 @@ export class OverlayStockChart {
       }
     });
 
+    // 0.5단계: 다중 포인트 이벤트 그리기 (PointEvent - 여러 점을 연결한 도형/선)
+    multiPointEvents.forEach(event => {
+      if (!isMultiPointEvent(event)) return;
+      
+      // 색상 우선순위
+      let eventColor = event.color;
+      if (!eventColor && event.symbol) {
+        const symbolData = this.dataMap.get(event.symbol);
+        if (symbolData?.color) {
+          eventColor = symbolData.color;
+        } else {
+          eventColor = this.getTickerColor(event.symbol);
+        }
+      }
+      if (!eventColor) {
+        eventColor = '#FF6600';
+      }
+      
+      const chartKey = event.chartKey || this.state.visibleChartKeys[0];
+      
+      // 해당 차트가 보이지 않으면 그리지 않음
+      if (!this.state.visibleChartKeys.includes(chartKey)) {
+        return;
+      }
+      
+      const layout = chartLayouts.find(l => l.key === chartKey);
+      if (!layout) return;
+      
+      // 차트 데이터 범위 계산
+      let globalMin = Infinity, globalMax = -Infinity;
+      this.dataMap.forEach((value) => {
+        const chartData = value.data[chartKey] || [];
+        const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
+        if (values.length > 0) {
+          globalMin = Math.min(globalMin, ...values);
+          globalMax = Math.max(globalMax, ...values);
+        }
+      });
+      
+      if (globalMin === Infinity || globalMax === -Infinity) return;
+      
+      // 클리핑 적용
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.rect(this.chartAreaLeft, layout.topY, this.chartAreaWidth, layout.height);
+      this.ctx.clip();
+      
+      // 스타일 설정
+      const strokeStyle = event.strokeStyle || eventColor;
+      const fillStyle = event.fillStyle;
+      
+      this.ctx.strokeStyle = strokeStyle;
+      this.ctx.lineWidth = 2;
+      this.ctx.lineJoin = 'round';
+      this.ctx.lineCap = 'round';
+      
+      // 경로 그리기
+      this.ctx.beginPath();
+      let firstPoint = true;
+      
+      event.points.forEach((point, index) => {
+        const x = this.getX(point.x, minTime, maxTime);
+        const y = this.getY(point.y, globalMin, globalMax, layout.topY, layout.height);
+        
+        if (firstPoint) {
+          this.ctx.moveTo(x, y);
+          firstPoint = false;
+        } else {
+          if (event.smooth && index > 0) {
+            // 부드러운 곡선 (quadratic curve)
+            const prevPoint = event.points[index - 1];
+            const prevX = this.getX(prevPoint.x, minTime, maxTime);
+            const prevY = this.getY(prevPoint.y, globalMin, globalMax, layout.topY, layout.height);
+            const cpX = (prevX + x) / 2;
+            const cpY = (prevY + y) / 2;
+            this.ctx.quadraticCurveTo(prevX, prevY, cpX, cpY);
+            if (index === event.points.length - 1) {
+              this.ctx.lineTo(x, y);
+            }
+          } else {
+            this.ctx.lineTo(x, y);
+          }
+        }
+      });
+      
+      // 채우기 (fillStyle이 있으면)
+      if (fillStyle) {
+        this.ctx.closePath();
+        this.ctx.fillStyle = fillStyle;
+        this.ctx.fill();
+      }
+      
+      // 선 그리기
+      if (strokeStyle) {
+        this.ctx.stroke();
+      }
+      
+      // 포인트 마커 그리기 및 호버 영역 등록
+      event.points.forEach((point, index) => {
+        const x = this.getX(point.x, minTime, maxTime);
+        const y = this.getY(point.y, globalMin, globalMax, layout.topY, layout.height);
+        
+        // 호버 가능한 영역 등록 (모든 포인트)
+        const pointEvent = { 
+          ...event, 
+          x: point.x, 
+          y: point.y,
+          pointIndex: index 
+        } as any;
+        
+        this.eventMarkers.push({
+          event: pointEvent,
+          x,
+          y,
+          radius: 8
+        });
+        
+        // 호버 시 툴팁 정보 저장
+        const isHovered = this.hoveredEventMarker !== null && 
+          this.hoveredEventMarker.label === event.label &&
+          (this.hoveredEventMarker as any).x === point.x &&
+          (this.hoveredEventMarker as any).y === point.y;
+        
+        if (isHovered) {
+          this.eventTooltipsToRender.push({ 
+            event: pointEvent, 
+            x, 
+            y: y - 10, 
+            pointsDown: false 
+          });
+        }
+        
+        if (point.xPointType || point.yPointType) {
+          const pointType = point.xPointType || point.yPointType || 'dot';
+          
+          if (pointType === 'dot') {
+            this.ctx.fillStyle = strokeStyle;
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, 3, 0, Math.PI * 2);
+            this.ctx.fill();
+          } else if (pointType === 'rightArrow') {
+            // 오른쪽 화살표: 끝이 x, y를 가리킴
+            this.ctx.fillStyle = strokeStyle;
+            this.ctx.beginPath();
+            this.ctx.moveTo(x - 8, y - 4);
+            this.ctx.lineTo(x, y);
+            this.ctx.lineTo(x - 8, y + 4);
+            this.ctx.closePath();
+            this.ctx.fill();
+          } else if (pointType === 'leftArrow') {
+            // 왼쪽 화살표: 끝이 x, y를 가리킴
+            this.ctx.fillStyle = strokeStyle;
+            this.ctx.beginPath();
+            this.ctx.moveTo(x + 8, y - 4);
+            this.ctx.lineTo(x, y);
+            this.ctx.lineTo(x + 8, y + 4);
+            this.ctx.closePath();
+            this.ctx.fill();
+          } else if (pointType === 'rightArrowDot') {
+            // 오른쪽 화살표 + 점 (►•): 화살표 끝이 x, y를 가리킴
+            this.ctx.fillStyle = strokeStyle;
+            this.ctx.beginPath();
+            this.ctx.moveTo(x - 6, y - 4);
+            this.ctx.lineTo(x, y);
+            this.ctx.lineTo(x - 6, y + 4);
+            this.ctx.closePath();
+            this.ctx.fill();
+            // 점 (화살표 오른쪽에)
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+            this.ctx.fill();
+          } else if (pointType === 'leftArrowDot') {
+            // 왼쪽 화살표 + 점 (•◄): 화살표 끝이 x, y를 가리킴
+            this.ctx.fillStyle = strokeStyle;
+            this.ctx.beginPath();
+            this.ctx.moveTo(x + 6, y - 4);
+            this.ctx.lineTo(x, y);
+            this.ctx.lineTo(x + 6, y + 4);
+            this.ctx.closePath();
+            this.ctx.fill();
+            // 점 (화살표 왼쪽에)
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+            this.ctx.fill();
+          } else if (pointType === 'rightArrowLine') {
+            // 오른쪽 화살표 + 선 (►|): 화살표 끝이 x, y를 가리킴
+            this.ctx.fillStyle = strokeStyle;
+            this.ctx.beginPath();
+            this.ctx.moveTo(x - 6, y - 4);
+            this.ctx.lineTo(x, y);
+            this.ctx.lineTo(x - 6, y + 4);
+            this.ctx.closePath();
+            this.ctx.fill();
+            // 세로선 (화살표 오른쪽에)
+            this.ctx.strokeStyle = strokeStyle;
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.moveTo(x, y - 5);
+            this.ctx.lineTo(x, y + 5);
+            this.ctx.stroke();
+          } else if (pointType === 'leftArrowLine') {
+            // 왼쪽 화살표 + 선 (|◄): 화살표 끝이 x, y를 가리킴
+            this.ctx.fillStyle = strokeStyle;
+            this.ctx.beginPath();
+            this.ctx.moveTo(x + 6, y - 4);
+            this.ctx.lineTo(x, y);
+            this.ctx.lineTo(x + 6, y + 4);
+            this.ctx.closePath();
+            this.ctx.fill();
+            // 세로선 (화살표 왼쪽에)
+            this.ctx.strokeStyle = strokeStyle;
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.moveTo(x, y - 5);
+            this.ctx.lineTo(x, y + 5);
+            this.ctx.stroke();
+          }
+        }
+      });
+      
+      this.ctx.restore();
+      
+      // 첫 번째 포인트에 라벨 그리기
+      if (event.points.length > 0) {
+        const firstPoint = event.points[0];
+        const labelX = this.getX(firstPoint.x, minTime, maxTime);
+        const labelY = this.getY(firstPoint.y, globalMin, globalMax, layout.topY, layout.height);
+        
+        // 라벨 포맷 적용
+        const labelFormatted = this.config.eventLabelFormat 
+          ? this.config.eventLabelFormat(event)
+          : event.label;
+        const labelText = this.applyFormatResult(labelFormatted);
+        
+        this.ctx.fillStyle = strokeStyle;
+        this.ctx.font = 'bold 11px Arial';
+        this.ctx.textAlign = 'left';
+        this.ctx.textBaseline = 'bottom';
+        this.ctx.fillText(labelText, labelX + 5, labelY - 5);
+      }
+    });
+
     // 1단계: X-only 이벤트 그리기 (세로 라인)
     xOnlyEvents.forEach(event => {
       // 색상 우선순위: 1. 이벤트 자체 color, 2. 심볼 color, 3. 심볼 할당 색상, 4. 기본 색상
@@ -2215,7 +1798,7 @@ export class OverlayStockChart {
           this.ctx.fillStyle = strokeStyle;
           this.ctx.font = 'bold 11px Arial';
           this.ctx.textAlign = 'left'; // 왼쪽 정렬로 텍스트가 차트 안쪽에 위치
-          this.ctx.textBaseline = 'bottom'; // 아래쪽 정렬
+          this.ctx.textBaseline = 'top'; // 위쪽 정렬
           const textMetrics = this.ctx.measureText(labelText);
           this.ctx.fillText(labelText, 5, 0); // 양수 오프셋으로 선에서 떨어뜨림
           this.ctx.restore();
@@ -2597,29 +2180,35 @@ export class OverlayStockChart {
     } else {
       // 포인트 이벤트
       // chartKey를 먼저 추출 (타입 가드 전에)
-      const eventWithMeta = event as EventMarker & { chartKey?: string };
+      const eventWithMeta = event as EventMarker & { chartKey?: string; pointIndex?: number };
       const chartKey = eventWithMeta.chartKey;
+      const pointIndex = eventWithMeta.pointIndex;
       
-      // X 값 (시간) - X 또는 XY 포인트 이벤트인 경우 표시
-      if ((isXPointEvent(event) || isXYPointEvent(event)) && event.x !== undefined) {
-        const xTime = event.x;
+      // PointEvent의 개별 포인트인 경우
+      if (pointIndex !== undefined) {
+        subTextParts.push(`Point ${pointIndex + 1}`);
+      }
+      
+      // X 값 (시간) - 직접 x 속성 체크
+      if ('x' in event && event.x !== undefined) {
+        const xTime = (event as any).x;
         const xFormatted = this.config.tooltipXFormat
           ? this.config.tooltipXFormat(xTime, '', chartKey || '')
           : (this.config.xFormat 
             ? this.config.xFormat(xTime, 0, 1, chartKey)
             : new Date(xTime).toLocaleString());
-        subTextParts.push(`X: ${this.applyFormatResult(xFormatted)}`);
+        subTextParts.push(`Time: ${this.applyFormatResult(xFormatted)}`);
       }
       
-      // Y 값 - Y 또는 XY 포인트 이벤트인 경우 표시
-      if ((isYPointEvent(event) || isXYPointEvent(event)) && event.y !== undefined) {
-        const yValue = event.y;
+      // Y 값 - 직접 y 속성 체크
+      if ('y' in event && event.y !== undefined) {
+        const yValue = (event as any).y;
         const yFormatted = this.config.tooltipYFormat
           ? this.config.tooltipYFormat(yValue, chartKey || '', '')
           : (this.config.yFormat 
             ? this.config.yFormat(yValue, 0, 1, chartKey)
             : yValue.toLocaleString());
-        subTextParts.push(`Y: ${this.applyFormatResult(yFormatted)}`);
+        subTextParts.push(`Value: ${this.applyFormatResult(yFormatted)}`);
       }
       
       // Chart Key
