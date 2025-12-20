@@ -7,13 +7,13 @@ type ChartData = {
 };
 
 // 공통 이벤트 속성
-interface EventBase {
+export interface EventBase {
   label: string;
   color?: string;
 }
 
 // X축 포인트 이벤트 (세로 라인)
-interface XPointEvent {
+export interface XPointEvent {
   x: number; // X축 값 (Unix timestamp in seconds)
 }
 
@@ -122,7 +122,7 @@ interface DrawArea {
 // 공통 이벤트 타입 정의
 type CommonEvents = {
   x?: (XPointEvent & EventBase)[]; // 모든 차트의 X축에 표시될 공통 세로선 이벤트
-  chart?: { [key: string]: EventMarker[] }; // 차트별 이벤트
+  chart?: { [key: string]: EventMarker[] } | EventMarker[]; // 차트별 이벤트 (배열이면 첫 번째 차트에 적용)
 };
 
 interface ChartOptions {
@@ -228,6 +228,9 @@ interface RenderState {
   rangeMax: number;
 }
 
+// 공통 이벤트 타입 export
+export type { CommonEvents };
+
 export class OverlayStockChart {
   private ctx: CanvasRenderingContext2D;
   private canvas: HTMLCanvasElement;
@@ -272,7 +275,7 @@ export class OverlayStockChart {
       }
     }
   }>;
-  private commonEvents: { [key: string]: EventMarker[] } | EventMarker[];
+  private commonEvents: CommonEvents;
   private tickerColors: Map<string, string> = new Map();
   private config: ChartConfig;
   
@@ -329,7 +332,7 @@ export class OverlayStockChart {
         events?: EventMarker[];
       }
     }>,
-    commonEvents: { [key: string]: EventMarker[] } | EventMarker[] = [],
+    commonEvents: CommonEvents = {},
     initialState: RenderState,
     config?: ChartConfig
   ) {
@@ -441,8 +444,8 @@ export class OverlayStockChart {
 
   // commonEvents를 내부 형식으로 변환
   private normalizeCommonEvents(
-    input: { [key: string]: EventMarker[] } | EventMarker[]
-  ): { [key: string]: EventMarker[] } | EventMarker[] {
+    input: CommonEvents
+  ): CommonEvents {
     // 이미 올바른 형식이면 그대로 반환
     return input;
   }
@@ -473,7 +476,7 @@ export class OverlayStockChart {
       datas: ChartData[];
       events?: EventMarker[];
     }
-  }>, commonEvents: { [key: string]: EventMarker[] } | EventMarker[] = []) {
+  }>, commonEvents: CommonEvents = {}) {
     this.dataMap = this.normalizeDataMap(dataMap);
     this.commonEvents = this.normalizeCommonEvents(commonEvents);
     
@@ -1241,20 +1244,38 @@ export class OverlayStockChart {
     const maxTime = displayMaxTime ?? sortedTimes[sortedTimes.length - 1];
 
     // 모든 이벤트 수집 (티커별 + 공통) - 심볼 및 차트 키 정보와 함께
-    const allEvents: Array<EventMarker & { symbol?: string; chartKey?: string }> = [];
+    const allEvents: Array<EventMarker & { symbol?: string; chartKey?: string; isCommonX?: boolean }> = [];
     
-    // 공통 이벤트 추가 (심볼 없음, 차트 키는 객체 키에서 가져옴)
-    if (this.commonEvents) {
-      if (Array.isArray(this.commonEvents)) {
-        // 단일 배열 형식: EventMarker[] (하위 호환성)
-        // 첫 번째 visibleChartKey를 기본값으로 사용
+    // 1. X축 공통 이벤트 추가 (모든 차트에 세로선으로 표시)
+    if (this.commonEvents.x && this.commonEvents.x.length > 0) {
+      // 각 visible 차트에 대해 X축 공통 이벤트 추가
+      for (const chartKey of this.state.visibleChartKeys) {
+        allEvents.push(...this.commonEvents.x.map(e => ({ 
+          ...e, 
+          symbol: undefined, 
+          chartKey, 
+          isCommonX: true // X축 공통 이벤트 표시
+        })));
+      }
+    }
+    
+    // 2. 차트별 공통 이벤트 추가
+    if (this.commonEvents.chart) {
+      if (Array.isArray(this.commonEvents.chart)) {
+        // 배열 형식: EventMarker[] -> 첫 번째 visibleChartKey를 기본값으로 사용
         const defaultChartKey = this.state.visibleChartKeys[0];
-        allEvents.push(...this.commonEvents.map(e => ({ ...e, symbol: undefined, chartKey: defaultChartKey })));
+        if (defaultChartKey) {
+          allEvents.push(...this.commonEvents.chart.map(e => ({ 
+            ...e, 
+            chartKey: defaultChartKey, 
+            symbol: undefined 
+          })));
+        }
       } else {
         // 객체 형식: { [key: string]: EventMarker[] }
         // 현재 표시 중인 차트 키에 해당하는 이벤트만 추가
         for (const chartKey of this.state.visibleChartKeys) {
-          const events = this.commonEvents[chartKey];
+          const events = this.commonEvents.chart[chartKey];
           if (events && events.length > 0) {
             allEvents.push(...events.map(e => ({ ...e, chartKey, symbol: undefined })));
           }
@@ -1262,7 +1283,7 @@ export class OverlayStockChart {
       }
     }
     
-    // 활성화된 티커의 이벤트 추가 (심볼 정보 포함)
+    // 3. 활성화된 티커의 이벤트 추가 (심볼 정보 포함)
     // 티커별 이벤트는 각 chartKey별로 수집
     this.dataMap.forEach((value, symbol) => {
       if (!this.state.enabledTickers.has(symbol)) return;
@@ -2049,91 +2070,170 @@ export class OverlayStockChart {
       // X 값 계산
       const xTime = event.x;
       const eventChartKey = event.chartKey;
+      const isCommonX = (event as any).isCommonX; // 공통 X 이벤트 여부
 
       // 디버그 로그
-      console.log(`Event: "${event.label}", xTime: ${xTime}, chartKey: ${eventChartKey}`);
+      console.log(`Event: "${event.label}", xTime: ${xTime}, chartKey: ${eventChartKey}, isCommonX: ${isCommonX}`);
 
       // X만 있음 (세로 라인)
       if (xTime >= minTime && xTime <= maxTime) {
-          // chartKey가 지정된 경우 해당 차트 영역만 찾기
-          const chartKey = eventChartKey || this.state.visibleChartKeys[0];
+          // 공통 X 이벤트인 경우: 모든 차트에 세로선, 라벨은 첫 번째 차트에만
+          // 일반 X 이벤트인 경우: 해당 차트에만 세로선과 라벨
           
-          // 해당 차트가 보이지 않으면 그리지 않음
-          if (!this.state.visibleChartKeys.includes(chartKey)) {
-            return;
-          }
-          
-          const area = chartAreas.find(a => a.key === chartKey);
-          if (!area) {
-            return;
-          }
-          
-          const x = this.getX(xTime, minTime, maxTime);
-          
-          // 스타일 적용
-          const strokeStyle = this.config.eventXStrokeStyle
-            ? (typeof this.config.eventXStrokeStyle === 'function' 
-              ? this.config.eventXStrokeStyle(event) 
-              : this.config.eventXStrokeStyle)
-            : eventColor;
-          const lineWidth = this.config.eventXLineWidth
-            ? (typeof this.config.eventXLineWidth === 'function' 
-              ? this.config.eventXLineWidth(event) 
-              : this.config.eventXLineWidth)
-            : 2;
-          const lineDash = this.config.eventXLineDash
-            ? (typeof this.config.eventXLineDash === 'function' 
-              ? this.config.eventXLineDash(event) 
-              : this.config.eventXLineDash)
-            : [];
-          
-          // 해당 차트 영역에만 세로선 그리기
-          this.ctx.strokeStyle = strokeStyle;
-          this.ctx.lineWidth = lineWidth;
-          this.ctx.setLineDash(lineDash);
-          this.ctx.beginPath();
-          this.ctx.moveTo(x, area.y);
-          this.ctx.lineTo(x, area.y + area.height);
-          this.ctx.stroke();
-          this.ctx.setLineDash([]);
+          if (isCommonX) {
+            // 공통 X 이벤트: 모든 visible 차트에 세로선 그리기
+            const x = this.getX(xTime, minTime, maxTime);
+            
+            // 스타일 적용
+            const strokeStyle = this.config.eventXStrokeStyle
+              ? (typeof this.config.eventXStrokeStyle === 'function' 
+                ? this.config.eventXStrokeStyle(event) 
+                : this.config.eventXStrokeStyle)
+              : eventColor;
+            const lineWidth = this.config.eventXLineWidth
+              ? (typeof this.config.eventXLineWidth === 'function' 
+                ? this.config.eventXLineWidth(event) 
+                : this.config.eventXLineWidth)
+              : 2;
+            const lineDash = this.config.eventXLineDash
+              ? (typeof this.config.eventXLineDash === 'function' 
+                ? this.config.eventXLineDash(event) 
+                : this.config.eventXLineDash)
+              : [];
+            
+            this.ctx.strokeStyle = strokeStyle;
+            this.ctx.lineWidth = lineWidth;
+            this.ctx.setLineDash(lineDash);
+            
+            // 모든 차트 영역에 세로선 그리기
+            chartAreas.forEach(area => {
+              this.ctx.beginPath();
+              this.ctx.moveTo(x, area.y);
+              this.ctx.lineTo(x, area.y + area.height);
+              this.ctx.stroke();
+            });
+            
+            this.ctx.setLineDash([]);
 
-          // 레이블 포맷 적용 (X-only 세로 라인)
-          const labelFormatted = this.config.eventLabelFormat 
-            ? this.config.eventLabelFormat(event)
-            : event.label;
-          const labelText = this.applyFormatResult(labelFormatted);
+            // 라벨은 첫 번째 차트에만 표시
+            const firstArea = chartAreas[0];
+            if (firstArea && eventChartKey === firstArea.key) {
+              // 레이블 포맷 적용 (X-only 세로 라인)
+              const labelFormatted = this.config.eventLabelFormat 
+                ? this.config.eventLabelFormat(event)
+                : event.label;
+              const labelText = this.applyFormatResult(labelFormatted);
 
-          // 레이블 위치 계산 (90도 회전하여 가로로 눕힘, 차트 안쪽에 표시)
-          const labelY = area.y; // 해당 차트 영역 안쪽
-          this.ctx.save();
-          this.ctx.translate(x, labelY);
-          this.ctx.rotate(Math.PI / 2); // 90도 시계방향 회전 (가로로 눕힘)
-          this.ctx.fillStyle = strokeStyle;
-          this.ctx.font = 'bold 11px Arial';
-          this.ctx.textAlign = 'left'; // 왼쪽 정렬로 텍스트가 차트 안쪽에 위치
-          this.ctx.textBaseline = 'top'; // 위쪽 정렬
-          const textMetrics = this.ctx.measureText(labelText);
-          this.ctx.fillText(labelText, 5, 0); // 양수 오프셋으로 선에서 떨어뜨림
-          this.ctx.restore();
-          
-          // 호버 가능한 영역 저장 (세로 라인 영역 - 좁은 폭)
-          // 세로 라인이므로 X축 방향으로는 좁게, Y축 방향으로는 해당 차트 높이로 설정
-          const labelWidth = textMetrics.width;
-          const lineHitWidth = 10; // 세로 라인 클릭 가능 영역 폭 (좌우 5px씩)
-          this.eventMarkers.push({ 
-            event,
-            x: x, 
-            y: area.y + area.height / 2, // 해당 차트 중앙
-            radius: lineHitWidth / 2 // 좁은 폭으로 설정
-          });
-          
-          // 호버 시 툴팁 정보 저장 (나중에 그리기)
-          const isHovered = this.hoveredEventMarker !== null && 
-            this.hoveredEventMarker.label === event.label &&
-            isXPointEvent(this.hoveredEventMarker) &&
-            this.hoveredEventMarker.x === event.x;
-          if (isHovered) {
-            this.eventTooltipsToRender.push({ event, x, y: labelY + 20, pointsDown: true });
+              // 레이블 위치 계산 (90도 회전하여 가로로 눕힘, 차트 안쪽에 표시)
+              const labelY = firstArea.y; // 첫 번째 차트 영역 안쪽
+              this.ctx.save();
+              this.ctx.translate(x, labelY);
+              this.ctx.rotate(Math.PI / 2); // 90도 시계방향 회전 (가로로 눕힘)
+              this.ctx.fillStyle = strokeStyle;
+              this.ctx.font = 'bold 11px Arial';
+              this.ctx.textAlign = 'left'; // 왼쪽 정렬로 텍스트가 차트 안쪽에 위치
+              this.ctx.textBaseline = 'top'; // 위쪽 정렬
+              const textMetrics = this.ctx.measureText(labelText);
+              this.ctx.fillText(labelText, 5, 0); // 양수 오프셋으로 선에서 떨어뜨림
+              this.ctx.restore();
+              
+              // 호버 가능한 영역 저장 (전체 차트 높이)
+              const lineHitWidth = 10;
+              this.eventMarkers.push({ 
+                event,
+                x: x, 
+                y: (chartAreas[0].y + chartAreas[chartAreas.length - 1].y + chartAreas[chartAreas.length - 1].height) / 2, // 전체 차트 중앙
+                radius: lineHitWidth / 2
+              });
+              
+              // 호버 시 툴팁 정보 저장
+              const isHovered = this.hoveredEventMarker !== null && 
+                this.hoveredEventMarker.label === event.label &&
+                isXPointEvent(this.hoveredEventMarker) &&
+                this.hoveredEventMarker.x === event.x;
+              if (isHovered) {
+                this.eventTooltipsToRender.push({ event, x, y: labelY + 20, pointsDown: true });
+              }
+            }
+          } else {
+            // 일반 X 이벤트: 해당 차트에만 세로선과 라벨
+            const chartKey = eventChartKey || this.state.visibleChartKeys[0];
+            
+            // 해당 차트가 보이지 않으면 그리지 않음
+            if (!this.state.visibleChartKeys.includes(chartKey)) {
+              return;
+            }
+            
+            const area = chartAreas.find(a => a.key === chartKey);
+            if (!area) {
+              return;
+            }
+            
+            const x = this.getX(xTime, minTime, maxTime);
+            
+            // 스타일 적용
+            const strokeStyle = this.config.eventXStrokeStyle
+              ? (typeof this.config.eventXStrokeStyle === 'function' 
+                ? this.config.eventXStrokeStyle(event) 
+                : this.config.eventXStrokeStyle)
+              : eventColor;
+            const lineWidth = this.config.eventXLineWidth
+              ? (typeof this.config.eventXLineWidth === 'function' 
+                ? this.config.eventXLineWidth(event) 
+                : this.config.eventXLineWidth)
+              : 2;
+            const lineDash = this.config.eventXLineDash
+              ? (typeof this.config.eventXLineDash === 'function' 
+                ? this.config.eventXLineDash(event) 
+                : this.config.eventXLineDash)
+              : [];
+            
+            // 해당 차트 영역에만 세로선 그리기
+            this.ctx.strokeStyle = strokeStyle;
+            this.ctx.lineWidth = lineWidth;
+            this.ctx.setLineDash(lineDash);
+            this.ctx.beginPath();
+            this.ctx.moveTo(x, area.y);
+            this.ctx.lineTo(x, area.y + area.height);
+            this.ctx.stroke();
+            this.ctx.setLineDash([]);
+
+            // 레이블 포맷 적용 (X-only 세로 라인)
+            const labelFormatted = this.config.eventLabelFormat 
+              ? this.config.eventLabelFormat(event)
+              : event.label;
+            const labelText = this.applyFormatResult(labelFormatted);
+
+            // 레이블 위치 계산 (90도 회전하여 가로로 눕힘, 차트 안쪽에 표시)
+            const labelY = area.y; // 해당 차트 영역 안쪽
+            this.ctx.save();
+            this.ctx.translate(x, labelY);
+            this.ctx.rotate(Math.PI / 2); // 90도 시계방향 회전 (가로로 눕힘)
+            this.ctx.fillStyle = strokeStyle;
+            this.ctx.font = 'bold 11px Arial';
+            this.ctx.textAlign = 'left'; // 왼쪽 정렬로 텍스트가 차트 안쪽에 위치
+            this.ctx.textBaseline = 'top'; // 위쪽 정렬
+            const textMetrics = this.ctx.measureText(labelText);
+            this.ctx.fillText(labelText, 5, 0); // 양수 오프셋으로 선에서 떨어뜨림
+            this.ctx.restore();
+            
+            // 호버 가능한 영역 저장 (세로 라인 영역 - 좁은 폭)
+            const lineHitWidth = 10;
+            this.eventMarkers.push({ 
+              event,
+              x: x, 
+              y: area.y + area.height / 2, // 해당 차트 중앙
+              radius: lineHitWidth / 2
+            });
+            
+            // 호버 시 툴팁 정보 저장
+            const isHovered = this.hoveredEventMarker !== null && 
+              this.hoveredEventMarker.label === event.label &&
+              isXPointEvent(this.hoveredEventMarker) &&
+              this.hoveredEventMarker.x === event.x;
+            if (isHovered) {
+              this.eventTooltipsToRender.push({ event, x, y: labelY + 20, pointsDown: true });
+            }
           }
       }
     });

@@ -1,4 +1,4 @@
-import { OverlayStockChart, type EventMarker } from './OverlayStockChart';
+import { OverlayStockChart, type EventMarker, type CommonEvents, type XPointEvent, type EventBase } from './OverlayStockChart';
 
 // 새로운 ChartData 타입 (OverlayStockChart에서 사용)
 type ChartData = {
@@ -100,7 +100,7 @@ function convertToNewFormat(oldData: OldChartData[]): { [key: string]: { datas: 
   return result;
 }
 
-function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>; commonEvents: { [key: string]: EventMarker[] } } {
+function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>; commonEvents: { x?: (XPointEvent & EventBase)[]; chart?: { [key: string]: EventMarker[] } | EventMarker[] } } {
   const symbols = ['AVGO', 'MU', '005930.KS', '000660.KS'];
   const start = new Date('2025-09-01T00:00:00Z').getTime();
   const day = 24 * 60 * 60 * 1000;
@@ -149,24 +149,28 @@ function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key
     });
   });
 
-  const commonEvents: { [key: string]: EventMarker[] } = {
-    price: [
-      { x: new Date('2025-09-15 09:30:00').getTime(), label: 'Event A', color: '#FF0000' },
-      { x: new Date('2025-10-15 09:30:00').getTime(), label: 'Event B', color: '#0000FF' },
-      { x: new Date('2025-11-15 09:30:00').getTime(), label: 'Event C', color: '#00AA00' },
-      { 
-        startX: new Date('2025-09-20 00:00:00').getTime(), 
-        endX: new Date('2025-10-05 00:00:00').getTime(), 
-        label: 'Earnings Season', 
-        color: 'rgba(255, 165, 0, 0.2)' 
-      },
-    ]
+  const commonEvents = {
+    x: [
+      { x: new Date('2025-09-15 09:30:00').getTime(), label: 'Common Event A', color: '#FF0000' },
+      { x: new Date('2025-10-15 09:30:00').getTime(), label: 'Common Event B', color: '#0000FF' },
+    ],
+    chart: {
+      price: [
+        { x: new Date('2025-11-15 09:30:00').getTime(), label: 'Price Event C', color: '#00AA00' },
+        { 
+          startX: new Date('2025-09-20 00:00:00').getTime(), 
+          endX: new Date('2025-10-05 00:00:00').getTime(), 
+          label: 'Earnings Season', 
+          color: 'rgba(255, 165, 0, 0.2)' 
+        },
+      ]
+    }
   };
 
   return { dataMap, commonEvents };
 }
 
-async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>; commonEvents: { [key: string]: EventMarker[] } }> {
+async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>; commonEvents: { x?: (XPointEvent & EventBase)[]; chart?: { [key: string]: EventMarker[] } | EventMarker[] } }> {
   try {
     // 1. 티커 목록 로드
     const tickersResp = await fetch('data/tickers.json');
@@ -249,18 +253,38 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
     });
     const chartKeys = Array.from(chartKeysSet);
     
-    // 4. 공통 이벤트 로드 (차트별로 분리된 파일)
-    const commonEvents: { [key: string]: EventMarker[] } = {};
+    // 4. 공통 이벤트 로드
+    const commonEvents: { x?: (XPointEvent & EventBase)[]; chart?: { [key: string]: EventMarker[] } | EventMarker[] } = {};
     
+    // 4-1. X축 공통 이벤트 로드 (모든 차트에 표시)
+    try {
+      const xEventsResp = await fetch(`data/x_events.json`);
+      if (xEventsResp.ok) {
+        const rawEvents = await xEventsResp.json() as any[];
+        // 문자열 timestamp를 숫자로 변환
+        commonEvents.x = rawEvents.map(event => {
+          const converted: any = { ...event };
+          if (typeof converted.x === 'string') {
+            converted.x = new Date(converted.x).getTime();
+          }
+          return converted as XPointEvent & EventBase;
+        });
+        console.log(`Loaded ${commonEvents.x.length} common X events`);
+      }
+    } catch (err) {
+      console.warn(`No x_events.json file`);
+    }
+    
+    // 4-2. 차트별 공통 이벤트 로드 (price_events.json, volume_events.json, obv_events.json)
+    const chartEventsMap: { [key: string]: EventMarker[] } = {};
     for (const chartKey of chartKeys) {
       try {
         const eventsResp = await fetch(`data/${chartKey}_events.json`);
         if (eventsResp.ok) {
           const rawEvents = await eventsResp.json() as any[];
           // 문자열 timestamp를 숫자로 변환
-          commonEvents[chartKey] = rawEvents.map(event => {
+          chartEventsMap[chartKey] = rawEvents.map(event => {
             const converted: any = { ...event };
-            // x, startX, endX 등의 timestamp 필드를 숫자로 변환
             if (typeof converted.x === 'string') {
               converted.x = new Date(converted.x).getTime();
             }
@@ -270,7 +294,6 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
             if (typeof converted.endX === 'string') {
               converted.endX = new Date(converted.endX).getTime();
             }
-            // points 배열의 x 값도 변환
             if (converted.points && Array.isArray(converted.points)) {
               converted.points = converted.points.map((p: any) => ({
                 ...p,
@@ -279,15 +302,21 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
             }
             return converted as EventMarker;
           });
-          console.log(`Loaded ${commonEvents[chartKey].length} events for ${chartKey}`);
+          console.log(`Loaded ${chartEventsMap[chartKey].length} common events for ${chartKey}`);
         }
       } catch (err) {
         console.warn(`No ${chartKey}_events.json file`);
       }
     }
+    if (Object.keys(chartEventsMap).length > 0) {
+      commonEvents.chart = chartEventsMap;
+    }
     
-    const totalEvents = Object.values(commonEvents).reduce((sum, events) => sum + events.length, 0);
-    setStatus(`Loaded ${map.size} tickers, ${totalEvents} common events`);
+    const totalXEvents = commonEvents.x?.length || 0;
+    const totalChartEvents = Array.isArray(commonEvents.chart) 
+      ? commonEvents.chart.length 
+      : Object.values(commonEvents.chart || {}).reduce((sum, events) => sum + events.length, 0);
+    setStatus(`Loaded ${map.size} tickers, ${totalXEvents} common X events, ${totalChartEvents} chart events`);
     return { dataMap: map, commonEvents };
   } catch (err) {
     setStatus('Using sample data (place data files to override)');
@@ -295,7 +324,7 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
   }
 }
 
-let currentData: { dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>; commonEvents: { [key: string]: EventMarker[] } } | null = null;
+let currentData: { dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>; commonEvents: { x?: (XPointEvent & EventBase)[]; chart?: { [key: string]: EventMarker[] } | EventMarker[] } } | null = null;
 let overlayChart: OverlayStockChart | null = null;
 let showEvents = false;
 let showCandles = false;
