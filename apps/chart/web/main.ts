@@ -53,11 +53,11 @@ type OldChartData = {
 };
 
 // 기존 데이터를 새 형식으로 변환
-function convertToNewFormat(oldData: OldChartData[]): { [key: string]: ChartData[] } {
-  const result: { [key: string]: ChartData[] } = {
-    price: [],
-    volume: [],
-    obv: []
+function convertToNewFormat(oldData: OldChartData[]): { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } {
+  const result: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } = {
+    price: { datas: [] },
+    volume: { datas: [] },
+    obv: { datas: [] }
   };
   
   oldData.forEach(d => {
@@ -65,7 +65,7 @@ function convertToNewFormat(oldData: OldChartData[]): { [key: string]: ChartData
     
     // Price 데이터
     if (d.close !== null && d.close !== undefined) {
-      result.price.push({
+      result.price.datas.push({
         x: timestamp,
         yOpen: d.open,
         yHigh: d.high,
@@ -76,7 +76,7 @@ function convertToNewFormat(oldData: OldChartData[]): { [key: string]: ChartData
     
     // Volume 데이터
     if (d.volume !== null && d.volume !== undefined) {
-      result.volume.push({
+      result.volume.datas.push({
         x: timestamp,
         // yOpen: d.volume-(d.volume/6),
         // yHigh: d.volume+(d.volume/6),
@@ -87,7 +87,7 @@ function convertToNewFormat(oldData: OldChartData[]): { [key: string]: ChartData
     
     // OBV 데이터
     if (d.obv !== null && d.obv !== undefined) {
-      result.obv.push({
+      result.obv.datas.push({
         x: timestamp,
         // yOpen: d.obv-(d.obv/6),
         // yHigh: d.obv+(d.obv/6),
@@ -100,13 +100,13 @@ function convertToNewFormat(oldData: OldChartData[]): { [key: string]: ChartData
   return result;
 }
 
-function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>; commonEvents: { [key: string]: EventMarker[] } } {
+function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>; commonEvents: { [key: string]: EventMarker[] } } {
   const symbols = ['AVGO', 'MU', '005930.KS', '000660.KS'];
   const start = new Date('2025-09-01T00:00:00Z').getTime();
   const day = 24 * 60 * 60 * 1000;
   const points = 60;
 
-  const dataMap = new Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>();
+  const dataMap = new Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>();
   symbols.forEach((sym, idx) => {
     let price = 100 + idx * 10;
     const priceData: ChartData[] = [];
@@ -142,9 +142,9 @@ function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key
     
     dataMap.set(sym, { 
       data: {
-        price: priceData,
-        volume: volumeData,
-        obv: obvData
+        price: { datas: priceData },
+        volume: { datas: volumeData },
+        obv: { datas: obvData }
       }
     });
   });
@@ -166,7 +166,7 @@ function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key
   return { dataMap, commonEvents };
 }
 
-async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>; commonEvents: { [key: string]: EventMarker[] } }> {
+async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>; commonEvents: { [key: string]: EventMarker[] } }> {
   try {
     // 1. 티커 목록 로드
     const tickersResp = await fetch('data/tickers.json');
@@ -180,7 +180,7 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
     setStatus(`Loading ${tickers.length} tickers...`);
     
     // 2. 각 티커별 데이터 및 이벤트 로드
-    const map = new Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>();
+    const map = new Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>();
     
     const loadPromises = tickers.map(async (ticker) => {
       try {
@@ -196,18 +196,19 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
         // 새 형식으로 변환
         const newData = convertToNewFormat(fData);
         
-        // 티커별 이벤트 로드
-        let tickerEvents: EventMarker[] | undefined = undefined;
-        try {
-          const eventsResp = await fetch(`data/${ticker}_events.json`);
-          if (eventsResp.ok) {
-            tickerEvents = await eventsResp.json() as EventMarker[];
+        // 티커별 이벤트 로드 (각 chartKey별로)
+        for (const chartKey of Object.keys(newData)) {
+          try {
+            const eventsResp = await fetch(`data/${ticker}_${chartKey}_events.json`);
+            if (eventsResp.ok) {
+              newData[chartKey].events = await eventsResp.json() as EventMarker[];
+            }
+          } catch (err) {
+            // 이벤트 파일이 없으면 무시
           }
-        } catch (err) {
-          console.warn(`No events file for ${ticker}`);
         }
         
-        map.set(ticker, { data: newData, events: tickerEvents });
+        map.set(ticker, { data: newData });
       } catch (err) {
         console.warn(`Error loading ${ticker}:`, err);
       }
@@ -219,7 +220,7 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
     const chartKeysSet = new Set<string>();
     map.forEach((value) => {
       Object.keys(value.data).forEach(key => {
-        if (value.data[key].length > 0) {
+        if (value.data[key].datas.length > 0) {
           chartKeysSet.add(key);
         }
       });
@@ -250,7 +251,7 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
   }
 }
 
-let currentData: { dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>; commonEvents: { [key: string]: EventMarker[] } } | null = null;
+let currentData: { dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>; commonEvents: { [key: string]: EventMarker[] } } | null = null;
 let overlayChart: OverlayStockChart | null = null;
 let showEvents = false;
 let showCandles = false;

@@ -51,7 +51,7 @@ async function main() {
     // timestamp를 x (밀리초)로 변환
     const convertedEvent = {
       ...event,
-      x: event.timestamp ? new Date(event.timestamp).getTime() : undefined,
+      x: event.timestamp,
       timestamp: undefined // timestamp 필드 제거
     };
     

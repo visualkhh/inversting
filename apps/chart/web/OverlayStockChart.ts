@@ -257,7 +257,15 @@ export class OverlayStockChart {
     '#48D1CC'  // Medium Turquoise
   ];
   private chartMargin = 0.1;
-  private dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>;
+  private dataMap: Map<string, { 
+    color?: string; 
+    data: { 
+      [key: string]: {
+        datas: ChartData[];
+        events?: EventMarker[];
+      }
+    }
+  }>;
   private commonEvents: { [key: string]: EventMarker[] } | EventMarker[];
   private tickerColors: Map<string, string> = new Map();
   private config: ChartConfig;
@@ -303,7 +311,18 @@ export class OverlayStockChart {
 
   constructor(
     canvas: HTMLCanvasElement,
-    dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] } | ChartData[]; events?: EventMarker[] }>,
+    dataMap: Map<string, { 
+      color?: string; 
+      data: { 
+        [key: string]: {
+          datas: ChartData[];
+          events?: EventMarker[];
+        }
+      } | {
+        datas: ChartData[];
+        events?: EventMarker[];
+      }
+    }>,
     commonEvents: { [key: string]: EventMarker[] } | EventMarker[] = [],
     initialState: RenderState,
     config?: ChartConfig
@@ -354,25 +373,59 @@ export class OverlayStockChart {
 
   // main.ts에서 받은 데이터를 내부 형식으로 변환
   private normalizeDataMap(
-    inputMap: Map<string, { color?: string; data: { [key: string]: ChartData[] } | ChartData[]; events?: EventMarker[] }>
-  ): Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }> {
-    const normalizedMap = new Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>();
+    inputMap: Map<string, { 
+      color?: string; 
+      data: { 
+        [key: string]: {
+          datas: ChartData[];
+          events?: EventMarker[];
+        }
+      } | {
+        datas: ChartData[];
+        events?: EventMarker[];
+      }
+    }>
+  ): Map<string, { 
+    color?: string; 
+    data: { 
+      [key: string]: {
+        datas: ChartData[];
+        events?: EventMarker[];
+      }
+    }
+  }> {
+    const normalizedMap = new Map<string, { 
+      color?: string; 
+      data: { 
+        [key: string]: {
+          datas: ChartData[];
+          events?: EventMarker[];
+        }
+      }
+    }>();
     
     inputMap.forEach((value, symbol) => {
-      // data가 배열인지 객체인지 확인
-      if (Array.isArray(value.data)) {
-        // 단일 배열 형식: ChartData[] -> { 'default': ChartData[] }로 변환
+      // data가 단일 객체인지 chartKey별 객체인지 확인
+      const data = value.data;
+      
+      // 타입 가드: datas 속성이 있으면 단일 객체 형식
+      if ('datas' in data && Array.isArray(data.datas)) {
+        // 단일 객체 형식: { datas: ChartData[], events?: EventMarker[] } -> { 'default': {...} }로 변환
+        const singleData = data as { datas: ChartData[]; events?: EventMarker[] };
         normalizedMap.set(symbol, {
           color: value.color,
-          data: { 'default': value.data as ChartData[] },
-          events: value.events
+          data: { 
+            'default': {
+              datas: singleData.datas,
+              events: singleData.events
+            }
+          }
         });
       } else {
-        // 이미 객체 형식: { [key: string]: ChartData[] }
+        // 이미 chartKey별 객체 형식
         normalizedMap.set(symbol, {
           color: value.color,
-          data: value.data as { [key: string]: ChartData[] },
-          events: value.events
+          data: data as { [key: string]: { datas: ChartData[]; events?: EventMarker[] } }
         });
       }
     });
@@ -403,7 +456,18 @@ export class OverlayStockChart {
     this.resizeObserver.observe(this.canvas);
   }
 
-  setData(dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] } | ChartData[]; events?: EventMarker[] }>, commonEvents: { [key: string]: EventMarker[] } | EventMarker[] = []) {
+  setData(dataMap: Map<string, { 
+    color?: string; 
+    data: { 
+      [key: string]: {
+        datas: ChartData[];
+        events?: EventMarker[];
+      }
+    } | {
+      datas: ChartData[];
+      events?: EventMarker[];
+    }
+  }>, commonEvents: { [key: string]: EventMarker[] } | EventMarker[] = []) {
     this.dataMap = this.normalizeDataMap(dataMap);
     this.commonEvents = this.normalizeCommonEvents(commonEvents);
     
@@ -500,7 +564,10 @@ export class OverlayStockChart {
 
     this.dataMap.forEach((value, symbol) => {
       const points: { time: number; open: number; high: number; low: number; close: number }[] = [];
-      const chartData = value.data[chartKey] || [];
+      const chartDataObj = value.data[chartKey];
+      if (!chartDataObj) return;
+      
+      const chartData = chartDataObj.datas || [];
       chartData.forEach(d => {
         const time = d.x;
         if (d.y !== null && d.y !== undefined) {
@@ -1190,11 +1257,16 @@ export class OverlayStockChart {
     }
     
     // 활성화된 티커의 이벤트 추가 (심볼 정보 포함)
-    // 티커별 이벤트는 첫 번째 visibleChartKey를 기본값으로 사용
-    const defaultChartKey = this.state.visibleChartKeys[0];
+    // 티커별 이벤트는 각 chartKey별로 수집
     this.dataMap.forEach((value, symbol) => {
-      if (this.state.enabledTickers.has(symbol) && value.events && value.events.length > 0) {
-        allEvents.push(...value.events.map(e => ({ ...e, symbol, chartKey: defaultChartKey })));
+      if (!this.state.enabledTickers.has(symbol)) return;
+      
+      // 각 chartKey별로 이벤트 수집
+      for (const chartKey of this.state.visibleChartKeys) {
+        const chartDataObj = value.data[chartKey];
+        if (chartDataObj && chartDataObj.events && chartDataObj.events.length > 0) {
+          allEvents.push(...chartDataObj.events.map(e => ({ ...e, symbol, chartKey })));
+        }
       }
     });
 
@@ -1274,21 +1346,25 @@ export class OverlayStockChart {
               // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
               const symbolData = this.dataMap.get(event.symbol);
               if (symbolData) {
-                const chartData = symbolData.data[chartKey] || [];
-                const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-                if (values.length > 0) {
-                  globalMin = Math.min(...values);
-                  globalMax = Math.max(...values);
+                const chartDataObj = symbolData.data[chartKey];
+                if (chartDataObj) {
+                  const values = chartDataObj.datas.map(d => d.y).filter(v => v !== null && v !== undefined);
+                  if (values.length > 0) {
+                    globalMin = Math.min(...values);
+                    globalMax = Math.max(...values);
+                  }
                 }
               }
             } else {
               // 공통 이벤트: 모든 티커의 데이터 범위를 합쳐서 사용
               this.dataMap.forEach((value) => {
-                const chartData = value.data[chartKey] || [];
-                const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-                if (values.length > 0) {
-                  globalMin = Math.min(globalMin, ...values);
-                  globalMax = Math.max(globalMax, ...values);
+                const chartDataObj = value.data[chartKey];
+                if (chartDataObj) {
+                  const values = chartDataObj.datas.map(d => d.y).filter(v => v !== null && v !== undefined);
+                  if (values.length > 0) {
+                    globalMin = Math.min(globalMin, ...values);
+                    globalMax = Math.max(globalMax, ...values);
+                  }
                 }
               });
             }
@@ -1462,21 +1538,25 @@ export class OverlayStockChart {
             // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
             const symbolData = this.dataMap.get(event.symbol);
             if (symbolData) {
-              const chartData = symbolData.data[chartKey] || [];
-              const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-              if (values.length > 0) {
-                globalMin = Math.min(...values);
-                globalMax = Math.max(...values);
+              const chartDataObj = symbolData.data[chartKey];
+              if (chartDataObj) {
+                const values = chartDataObj.datas.map(d => d.y).filter(v => v !== null && v !== undefined);
+                if (values.length > 0) {
+                  globalMin = Math.min(...values);
+                  globalMax = Math.max(...values);
+                }
               }
             }
           } else {
             // 공통 이벤트: 모든 티커의 데이터 범위를 합쳐서 사용
             this.dataMap.forEach((value) => {
-              const chartData = value.data[chartKey] || [];
-              const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-              if (values.length > 0) {
-                globalMin = Math.min(globalMin, ...values);
-                globalMax = Math.max(globalMax, ...values);
+              const chartDataObj = value.data[chartKey];
+              if (chartDataObj) {
+                const values = chartDataObj.datas.map(d => d.y).filter(v => v !== null && v !== undefined);
+                if (values.length > 0) {
+                  globalMin = Math.min(globalMin, ...values);
+                  globalMax = Math.max(globalMax, ...values);
+                }
               }
             });
           }
@@ -1619,21 +1699,25 @@ export class OverlayStockChart {
         // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
         const symbolData = this.dataMap.get(event.symbol);
         if (symbolData) {
-          const chartData = symbolData.data[chartKey] || [];
-          const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-          if (values.length > 0) {
-            globalMin = Math.min(...values);
-            globalMax = Math.max(...values);
+          const chartDataObj = symbolData.data[chartKey];
+          if (chartDataObj) {
+            const values = chartDataObj.datas.map(d => d.y).filter(v => v !== null && v !== undefined);
+            if (values.length > 0) {
+              globalMin = Math.min(...values);
+              globalMax = Math.max(...values);
+            }
           }
         }
       } else {
         // 공통 이벤트: 모든 티커의 데이터 범위를 합쳐서 사용
         this.dataMap.forEach((value) => {
-          const chartData = value.data[chartKey] || [];
-          const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-          if (values.length > 0) {
-            globalMin = Math.min(globalMin, ...values);
-            globalMax = Math.max(globalMax, ...values);
+          const chartDataObj = value.data[chartKey];
+          if (chartDataObj) {
+            const values = chartDataObj.datas.map(d => d.y).filter(v => v !== null && v !== undefined);
+            if (values.length > 0) {
+              globalMin = Math.min(globalMin, ...values);
+              globalMax = Math.max(globalMax, ...values);
+            }
           }
         });
       }
@@ -2076,11 +2160,13 @@ export class OverlayStockChart {
             // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
             const symbolData = this.dataMap.get(useSymbol);
             if (symbolData) {
-              const chartData = symbolData.data[chartKey] || [];
-              const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-              if (values.length > 0) {
-                globalMin = Math.min(...values);
-                globalMax = Math.max(...values);
+              const chartDataObj = symbolData.data[chartKey];
+              if (chartDataObj) {
+                const values = chartDataObj.datas.map(d => d.y).filter(v => v !== null && v !== undefined);
+                if (values.length > 0) {
+                  globalMin = Math.min(...values);
+                  globalMax = Math.max(...values);
+                }
               }
             }
           }
@@ -2206,21 +2292,25 @@ export class OverlayStockChart {
               // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
               const symbolData = this.dataMap.get(event.symbol);
               if (symbolData) {
-                const chartData = symbolData.data[chartKey] || [];
-                const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-                if (values.length > 0) {
-                  globalMin = Math.min(...values);
-                  globalMax = Math.max(...values);
+                const chartDataObj = symbolData.data[chartKey];
+                if (chartDataObj) {
+                  const values = chartDataObj.datas.map(d => d.y).filter(v => v !== null && v !== undefined);
+                  if (values.length > 0) {
+                    globalMin = Math.min(...values);
+                    globalMax = Math.max(...values);
+                  }
                 }
               }
             } else {
               // 공통 이벤트: 모든 티커의 데이터 범위를 합쳐서 사용
               this.dataMap.forEach((value) => {
-                const chartData = value.data[chartKey] || [];
-                const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-                if (values.length > 0) {
-                  globalMin = Math.min(globalMin, ...values);
-                  globalMax = Math.max(globalMax, ...values);
+                const chartDataObj = value.data[chartKey];
+                if (chartDataObj) {
+                  const values = chartDataObj.datas.map(d => d.y).filter(v => v !== null && v !== undefined);
+                  if (values.length > 0) {
+                    globalMin = Math.min(globalMin, ...values);
+                    globalMax = Math.max(globalMax, ...values);
+                  }
                 }
               });
             }
@@ -2879,11 +2969,13 @@ export class OverlayStockChart {
           let globalMax = -Infinity;
           
           this.dataMap.forEach((value) => {
-            const chartData = value.data[area.key] || [];
-            const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-            if (values.length > 0) {
-              globalMin = Math.min(globalMin, ...values);
-              globalMax = Math.max(globalMax, ...values);
+            const chartDataObj = value.data[area.key];
+            if (chartDataObj) {
+              const values = chartDataObj.datas.map((d: ChartData) => d.y).filter((v: number | null | undefined) => v !== null && v !== undefined);
+              if (values.length > 0) {
+                globalMin = Math.min(globalMin, ...values);
+                globalMax = Math.max(globalMax, ...values);
+              }
             }
           });
           
@@ -2940,10 +3032,12 @@ export class OverlayStockChart {
       if (this.state.normalize) {
         // 정규화: 각 티커별로 min/max 계산
         this.dataMap.forEach((value, symbol) => {
-          const chartData = value.data[chartKey] || [];
-          const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-          if (values.length > 0) {
-            minMaxBySymbol.set(symbol, { min: Math.min(...values), max: Math.max(...values) });
+          const chartDataObj = value.data[chartKey];
+          if (chartDataObj) {
+            const values = chartDataObj.datas.map(d => d.y).filter(v => v !== null && v !== undefined);
+            if (values.length > 0) {
+              minMaxBySymbol.set(symbol, { min: Math.min(...values), max: Math.max(...values) });
+            }
           }
         });
       } else {
@@ -2951,11 +3045,13 @@ export class OverlayStockChart {
         let globalMin = Infinity, globalMax = -Infinity;
         
         this.dataMap.forEach((value) => {
-          const chartData = value.data[chartKey] || [];
-          const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-          if (values.length > 0) {
-            globalMin = Math.min(globalMin, ...values);
-            globalMax = Math.max(globalMax, ...values);
+          const chartDataObj = value.data[chartKey];
+          if (chartDataObj) {
+            const values = chartDataObj.datas.map(d => d.y).filter(v => v !== null && v !== undefined);
+            if (values.length > 0) {
+              globalMin = Math.min(globalMin, ...values);
+              globalMax = Math.max(globalMax, ...values);
+            }
           }
         });
         
@@ -2973,8 +3069,10 @@ export class OverlayStockChart {
         const minMax = minMaxBySymbol.get(symbol);
         if (!minMax) return;
 
-        const chartData = value.data[chartKey] || [];
-        chartData.forEach(d => {
+        const chartDataObj = value.data[chartKey];
+        if (!chartDataObj) return;
+        
+        chartDataObj.datas.forEach(d => {
           if (d.y === null || d.y === undefined) return;
           const time = d.x;
           if (time < minTime || time > maxTime) return;
@@ -3865,17 +3963,18 @@ export class OverlayStockChart {
     }, { passive: true });
   }
 
-  private groupDataByDay(dataMap: Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>): Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }> {
-    const groupedMap = new Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>();
+  private groupDataByDay(dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>): Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }> {
+    const groupedMap = new Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>();
     
     dataMap.forEach((value, symbol) => {
-      const groupedData: { [key: string]: ChartData[] } = {};
+      const groupedData: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } = {};
       
       // 각 데이터 타입별로 일자별 그룹화
       Object.keys(value.data).forEach(dataType => {
         const dailyMap = new Map<number, ChartData>();
+        const chartDataObj = value.data[dataType];
         
-        value.data[dataType].forEach(d => {
+        chartDataObj.datas.forEach(d => {
           const date = new Date(d.x);
           const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0);
           const dayKey = dayStart.getTime();
@@ -3904,10 +4003,13 @@ export class OverlayStockChart {
           }
         });
         
-        groupedData[dataType] = Array.from(dailyMap.values()).sort((a, b) => a.x - b.x);
+        groupedData[dataType] = { 
+          datas: Array.from(dailyMap.values()).sort((a, b) => a.x - b.x),
+          events: chartDataObj.events
+        };
       });
       
-      groupedMap.set(symbol, { color: value.color, data: groupedData, events: value.events });
+      groupedMap.set(symbol, { color: value.color, data: groupedData });
     });
     
     return groupedMap;
@@ -3954,7 +4056,7 @@ export class OverlayStockChart {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     
     // 활성화된 티커만 필터링
-    let filteredDataMap = new Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>();
+    let filteredDataMap = new Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>();
     this.dataMap.forEach((value, symbol) => {
       if (this.state.enabledTickers.has(symbol)) {
         filteredDataMap.set(symbol, value);
@@ -3970,8 +4072,8 @@ export class OverlayStockChart {
     let globalMinTime = Infinity;
     let globalMaxTime = -Infinity;
     filteredDataMap.forEach((value) => {
-      Object.values(value.data).forEach(dataArray => {
-        dataArray.forEach(d => {
+      Object.values(value.data).forEach(chartDataObj => {
+        chartDataObj.datas.forEach(d => {
           const time = d.x;
           if (time < globalMinTime) globalMinTime = time;
           if (time > globalMaxTime) globalMaxTime = time;
@@ -4000,14 +4102,15 @@ export class OverlayStockChart {
     
     // 시간 기반으로 각 티커 필터링
     if (this.state.rangeMin > 0 || this.state.rangeMax < 100 || this.zoomStart > 0 || this.zoomEnd < 100) {
-      const timeFilteredMap = new Map<string, { color?: string; data: { [key: string]: ChartData[] }; events?: EventMarker[] }>();
+      const timeFilteredMap = new Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>();
       filteredDataMap.forEach((value, symbol) => {
-        const filteredData: { [key: string]: ChartData[] } = {};
+        const filteredData: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } = {};
         
         Object.keys(value.data).forEach(dataType => {
-          const data = value.data[dataType];
+          const chartDataObj = value.data[dataType];
+          const data = chartDataObj.datas;
           if (data.length === 0) {
-            filteredData[dataType] = [];
+            filteredData[dataType] = { datas: [], events: chartDataObj.events };
             return;
           }
           
@@ -4024,16 +4127,16 @@ export class OverlayStockChart {
           }
           
           if (startIdx === -1 || endIdx === -1) {
-            filteredData[dataType] = [];
+            filteredData[dataType] = { datas: [], events: chartDataObj.events };
             return;
           }
           
           const actualStartIdx = Math.max(0, startIdx - 1);
           const actualEndIdx = Math.min(data.length - 1, endIdx + 1);
-          filteredData[dataType] = data.slice(actualStartIdx, actualEndIdx + 1);
+          filteredData[dataType] = { datas: data.slice(actualStartIdx, actualEndIdx + 1), events: chartDataObj.events };
         });
         
-        timeFilteredMap.set(symbol, { color: value.color, data: filteredData, events: value.events });
+        timeFilteredMap.set(symbol, { color: value.color, data: filteredData });
       });
       filteredDataMap = timeFilteredMap;
     }
@@ -4041,8 +4144,8 @@ export class OverlayStockChart {
     // 시간 포인트 수집
     const allTimePoints = new Set<number>();
     filteredDataMap.forEach((value) => {
-      Object.values(value.data).forEach(dataArray => {
-        dataArray.forEach(d => {
+      Object.values(value.data).forEach(chartDataObj => {
+        chartDataObj.datas.forEach(d => {
           const time = d.x;
           allTimePoints.add(time);
         });
