@@ -26,6 +26,7 @@ interface YPointEvent {
 interface XYPointEvent {
   x: number; // X축 값 (Unix timestamp in seconds)
   y: number; // Y축 값
+  type?: 'tag' | 'arrow' | 'dot'; // 마커 타입 (기본값: 'tag')
 }
 
 // X축 범위 이벤트 (시간 범위 영역)
@@ -108,6 +109,14 @@ function isMultiPointEvent(event: EventMarker): event is PointEvent & EventBase 
 
 function isPointEvent(event: EventMarker): event is (XPointEvent | YPointEvent | XYPointEvent) & EventBase {
   return !isRangeEvent(event) && !isMultiPointEvent(event);
+}
+
+// 그리기 영역 정의
+interface DrawArea {
+  x: number;      // 시작 X 좌표
+  y: number;      // 시작 Y 좌표
+  width: number;  // 너비
+  height: number; // 높이
 }
 
 interface ChartOptions {
@@ -462,9 +471,8 @@ export class OverlayStockChart {
 
   drawChartKey(
     chartKey: string,
+    area: DrawArea,
     visibleTickers: Set<string>,
-    chartTopY: number,
-    chartHeight: number,
     sortedTimes: number[],
     options: ChartOptions = {}
   ) {
@@ -481,6 +489,10 @@ export class OverlayStockChart {
     } = options;
 
     if (sortedTimes.length === 0) return;
+    
+    // area에서 위치와 크기 추출
+    const chartTopY = area.y;
+    const chartHeight = area.height;
     
     // 데이터 준비
     const dataBySymbol = new Map<string, { time: number; open: number; high: number; low: number; close: number }[]>();
@@ -1001,12 +1013,12 @@ export class OverlayStockChart {
   }
 
   drawLegend(
+    area: DrawArea,
     dataBySymbol: Map<string, any>,
-    visibleTickers: Set<string>,
-    legendItems: { symbol: string; x: number; y: number; width: number; height: number }[]
+    visibleTickers: Set<string>
   ): { symbol: string; x: number; y: number; width: number; height: number }[] {
-    const legendX = this.padding + 10;
-    const legendY = this.padding - 25;
+    const legendX = area.x;
+    const legendY = area.y;
     const legendLineWidth = 15;
     const legendItemWidth = 80;
     const legendHeight = 16;
@@ -1129,7 +1141,7 @@ export class OverlayStockChart {
     sortedTimes: number[],
     chartBottom: number,
     showEvents: boolean,
-    chartLayouts: { key: string; topY: number; height: number }[],
+    chartAreas: Array<DrawArea & { key: string }>,
     displayMinTime?: number,
     displayMaxTime?: number
   ) {
@@ -1234,9 +1246,9 @@ export class OverlayStockChart {
             return;
           }
           
-          const layout = chartLayouts.find(l => l.key === chartKey);
+          const area = chartAreas.find(a => a.key === chartKey);
           
-          if (layout) {
+          if (area) {
             let globalMin = Infinity, globalMax = -Infinity;
             this.dataMap.forEach((value) => {
               const chartData = value.data[chartKey] || [];
@@ -1257,12 +1269,12 @@ export class OverlayStockChart {
                 return;
               }
               
-              const y1Raw = this.getY(startY, globalMin, globalMax, layout.topY, layout.height);
-              const y2Raw = this.getY(endY, globalMin, globalMax, layout.topY, layout.height);
+              const y1Raw = this.getY(startY, globalMin, globalMax, area.y, area.height);
+              const y2Raw = this.getY(endY, globalMin, globalMax, area.y, area.height);
               
               // Y 좌표를 차트 영역 내로 제한
-              const y1 = Math.max(layout.topY, Math.min(layout.topY + layout.height, y1Raw));
-              const y2 = Math.max(layout.topY, Math.min(layout.topY + layout.height, y2Raw));
+              const y1 = Math.max(area.y, Math.min(area.y + area.height, y1Raw));
+              const y2 = Math.max(area.y, Math.min(area.y + area.height, y2Raw));
               
               const rectY = Math.min(y1, y2);
               const rectHeight = Math.abs(y2 - y1);
@@ -1294,7 +1306,7 @@ export class OverlayStockChart {
               // 클리핑 적용 (차트 영역 내에만 그리기)
               this.ctx.save();
               this.ctx.beginPath();
-              this.ctx.rect(this.chartAreaLeft, layout.topY, this.chartAreaWidth, layout.height);
+              this.ctx.rect(this.chartAreaLeft, area.y, this.chartAreaWidth, area.height);
               this.ctx.clip();
               
               this.ctx.fillStyle = fillStyle;
@@ -1352,26 +1364,26 @@ export class OverlayStockChart {
             : 1;
           
           // 전체 차트 높이에 걸쳐 표시
-          chartLayouts.forEach(layout => {
+          chartAreas.forEach(area => {
             // 클리핑 적용 (차트 영역 내에만 그리기)
             this.ctx.save();
             this.ctx.beginPath();
-            this.ctx.rect(this.chartAreaLeft, layout.topY, this.chartAreaWidth, layout.height);
+            this.ctx.rect(this.chartAreaLeft, area.y, this.chartAreaWidth, area.height);
             this.ctx.clip();
             
             this.ctx.fillStyle = fillStyle;
-            this.ctx.fillRect(x1, layout.topY, x2 - x1, layout.height);
+            this.ctx.fillRect(x1, area.y, x2 - x1, area.height);
             
             this.ctx.strokeStyle = strokeStyle;
             this.ctx.lineWidth = lineWidth;
-            this.ctx.strokeRect(x1, layout.topY, x2 - x1, layout.height);
+            this.ctx.strokeRect(x1, area.y, x2 - x1, area.height);
             
             this.ctx.restore();
           });
           
           // 라벨 (startX 위치, 차트 안쪽에 표시)
           const labelX = x1;
-          const labelY = chartLayouts[0].topY ;
+          const labelY = chartAreas[0].y;
           this.drawRangeEventLabel(event, labelX, labelY, eventColor, 'left');
           
           // 호버 체크
@@ -1390,9 +1402,9 @@ export class OverlayStockChart {
           return;
         }
         
-        const layout = chartLayouts.find(l => l.key === chartKey);
+        const area = chartAreas.find(a => a.key === chartKey);
         
-        if (layout) {
+        if (area) {
           let globalMin = Infinity, globalMax = -Infinity;
           this.dataMap.forEach((value) => {
             const chartData = value.data[chartKey] || [];
@@ -1413,12 +1425,12 @@ export class OverlayStockChart {
               return;
             }
             
-            const y1Raw = this.getY(startY, globalMin, globalMax, layout.topY, layout.height);
-            const y2Raw = this.getY(endY, globalMin, globalMax, layout.topY, layout.height);
+            const y1Raw = this.getY(startY, globalMin, globalMax, area.y, area.height);
+            const y2Raw = this.getY(endY, globalMin, globalMax, area.y, area.height);
             
             // Y 좌표를 차트 영역 내로 제한
-            const y1 = Math.max(layout.topY, Math.min(layout.topY + layout.height, y1Raw));
-            const y2 = Math.max(layout.topY, Math.min(layout.topY + layout.height, y2Raw));
+            const y1 = Math.max(area.y, Math.min(area.y + area.height, y1Raw));
+            const y2 = Math.max(area.y, Math.min(area.y + area.height, y2Raw));
             
             const rectY = Math.min(y1, y2);
             const rectHeight = Math.abs(y2 - y1);
@@ -1450,7 +1462,7 @@ export class OverlayStockChart {
             // 클리핑 적용 (차트 영역 내에만 그리기)
             this.ctx.save();
             this.ctx.beginPath();
-            this.ctx.rect(this.chartAreaLeft, layout.topY, this.chartAreaWidth, layout.height);
+            this.ctx.rect(this.chartAreaLeft, area.y, this.chartAreaWidth, area.height);
             this.ctx.clip();
             
             // 전체 X 범위에 걸쳐 표시
@@ -1469,10 +1481,10 @@ export class OverlayStockChart {
             
             // baseline 결정: 클램핑 여부와 startY/endY 관계를 고려
             let baseline: CanvasTextBaseline;
-            if (y1Raw < layout.topY) {
+            if (y1Raw < area.y) {
               // startY가 차트 위로 벗어남 → 텍스트를 아래로
               baseline = 'top';
-            } else if (y1Raw > layout.topY + layout.height) {
+            } else if (y1Raw > area.y + area.height) {
               // startY가 차트 아래로 벗어남 → 텍스트를 위로
               baseline = 'bottom';
             } else {
@@ -1514,8 +1526,8 @@ export class OverlayStockChart {
         return;
       }
       
-      const layout = chartLayouts.find(l => l.key === chartKey);
-      if (!layout) return;
+      const area = chartAreas.find(a => a.key === chartKey);
+      if (!area) return;
       
       // 차트 데이터 범위 계산
       let globalMin = Infinity, globalMax = -Infinity;
@@ -1533,7 +1545,7 @@ export class OverlayStockChart {
       // 클리핑 적용
       this.ctx.save();
       this.ctx.beginPath();
-      this.ctx.rect(this.chartAreaLeft, layout.topY, this.chartAreaWidth, layout.height);
+      this.ctx.rect(this.chartAreaLeft, area.y, this.chartAreaWidth, area.height);
       this.ctx.clip();
       
       // 스타일 설정
@@ -1551,7 +1563,7 @@ export class OverlayStockChart {
       
       event.points.forEach((point, index) => {
         const x = this.getX(point.x, minTime, maxTime);
-        const y = this.getY(point.y, globalMin, globalMax, layout.topY, layout.height);
+        const y = this.getY(point.y, globalMin, globalMax, area.y, area.height);
         
         if (firstPoint) {
           this.ctx.moveTo(x, y);
@@ -1561,7 +1573,7 @@ export class OverlayStockChart {
             // 부드러운 곡선 (quadratic curve)
             const prevPoint = event.points[index - 1];
             const prevX = this.getX(prevPoint.x, minTime, maxTime);
-            const prevY = this.getY(prevPoint.y, globalMin, globalMax, layout.topY, layout.height);
+            const prevY = this.getY(prevPoint.y, globalMin, globalMax, area.y, area.height);
             const cpX = (prevX + x) / 2;
             const cpY = (prevY + y) / 2;
             this.ctx.quadraticCurveTo(prevX, prevY, cpX, cpY);
@@ -1589,7 +1601,7 @@ export class OverlayStockChart {
       // 포인트 마커 그리기 및 호버 영역 등록
       event.points.forEach((point, index) => {
         const x = this.getX(point.x, minTime, maxTime);
-        const y = this.getY(point.y, globalMin, globalMax, layout.topY, layout.height);
+        const y = this.getY(point.y, globalMin, globalMax, area.y, area.height);
         
         // 호버 가능한 영역 등록 (모든 포인트)
         const pointEvent = { 
@@ -1715,7 +1727,7 @@ export class OverlayStockChart {
       if (event.points.length > 0) {
         const firstPoint = event.points[0];
         const labelX = this.getX(firstPoint.x, minTime, maxTime);
-        const labelY = this.getY(firstPoint.y, globalMin, globalMax, layout.topY, layout.height);
+        const labelY = this.getY(firstPoint.y, globalMin, globalMax, area.y, area.height);
         
         // 라벨 포맷 적용
         const labelFormatted = this.config.eventLabelFormat 
@@ -1791,7 +1803,7 @@ export class OverlayStockChart {
           const labelText = this.applyFormatResult(labelFormatted);
 
           // 레이블 위치 계산 (90도 회전하여 가로로 눕힘, 차트 안쪽에 표시)
-          const labelY = chartLayouts[0].topY; // 차트 영역 안쪽
+          const labelY = chartAreas[0].y; // 차트 영역 안쪽
           this.ctx.save();
           this.ctx.translate(x, labelY);
           this.ctx.rotate(Math.PI / 2); // 90도 시계방향 회전 (가로로 눕힘)
@@ -1803,13 +1815,15 @@ export class OverlayStockChart {
           this.ctx.fillText(labelText, 5, 0); // 양수 오프셋으로 선에서 떨어뜨림
           this.ctx.restore();
           
-          // 호버 가능한 영역 저장 (레이블 영역)
+          // 호버 가능한 영역 저장 (세로 라인 영역 - 좁은 폭)
+          // 세로 라인이므로 X축 방향으로는 좁게, Y축 방향으로는 차트 전체 높이로 설정
           const labelWidth = textMetrics.width;
+          const lineHitWidth = 10; // 세로 라인 클릭 가능 영역 폭 (좌우 5px씩)
           this.eventMarkers.push({ 
-            event, 
-            x: x + labelWidth / 2, 
-            y: labelY + labelWidth / 2, 
-            radius: labelWidth / 2 + 10 
+            event,
+            x: x, 
+            y: (this.padding + chartBottom) / 2, // 차트 중앙
+            radius: lineHitWidth / 2 // 좁은 폭으로 설정
           });
           
           // 호버 시 툴팁 정보 저장 (나중에 그리기)
@@ -1848,10 +1862,10 @@ export class OverlayStockChart {
       if (yValue !== undefined) {
         const chartKey = event.chartKey || this.state.visibleChartKeys[0];
         console.log(`Y-only event: "${event.label}", chartKey: ${chartKey}, visibleChartKeys:`, this.state.visibleChartKeys);
-        const layout = chartLayouts.find(l => l.key === chartKey);
-        console.log(`Layout found:`, layout);
+        const area = chartAreas.find(a => a.key === chartKey);
+        console.log(`Area found:`, area);
         
-        if (layout) {
+        if (area) {
           // Y 값을 화면 좌표로 변환
           let globalMin = Infinity, globalMax = -Infinity;
           this.dataMap.forEach((value) => {
@@ -1866,7 +1880,7 @@ export class OverlayStockChart {
           if (globalMin !== Infinity && globalMax !== -Infinity) {
             console.log(`Y-only event range: min=${globalMin}, max=${globalMax}, yValue=${yValue}`);
             // Y 값이 범위를 벗어나도 표시 (가로선은 항상 보이는 것이 유용)
-            const y = this.getY(yValue, globalMin, globalMax, layout.topY, layout.height);
+            const y = this.getY(yValue, globalMin, globalMax, area.y, area.height);
             console.log(`Y-only event drawing at y=${y}`);
             
             // 스타일 적용
@@ -1909,12 +1923,14 @@ export class OverlayStockChart {
             const textMetrics = this.ctx.measureText(labelText);
             this.ctx.fillText(labelText, labelX, y);
             
-            // 호버 가능한 영역 저장 (레이블 영역)
+            // 호버 가능한 영역 저장 (가로 라인 영역 - 좁은 높이)
+            // 가로 라인이므로 Y축 방향으로는 좁게, X축 방향으로는 차트 전체 너비로 설정
+            const lineHitHeight = 10; // 가로 라인 클릭 가능 영역 높이 (상하 5px씩)
             this.eventMarkers.push({ 
               event, 
-              x: labelX + textMetrics.width / 2, 
+              x: (this.chartAreaLeft + this.getChartRight()) / 2, // 차트 중앙
               y: y, 
-              radius: Math.max(textMetrics.width / 2, 10) 
+              radius: lineHitHeight / 2 // 좁은 높이로 설정
             });
             
             // 호버 시 툴팁 표시
@@ -1958,10 +1974,10 @@ export class OverlayStockChart {
         if (xTime >= minTime && xTime <= maxTime) {
           const chartKey = event.chartKey || this.state.visibleChartKeys[0];
           console.log(`X+Y event chartKey: ${chartKey}, visibleChartKeys:`, this.state.visibleChartKeys);
-          const layout = chartLayouts.find(l => l.key === chartKey);
-          console.log(`X+Y event layout found:`, layout);
+          const area = chartAreas.find(a => a.key === chartKey);
+          console.log(`X+Y event area found:`, area);
           
-          if (layout) {
+          if (area) {
             // Y 값을 화면 좌표로 변환
             let globalMin = Infinity, globalMax = -Infinity;
             this.dataMap.forEach((value) => {
@@ -1978,7 +1994,7 @@ export class OverlayStockChart {
               // Y 값이 범위 내에 있는지 확인
               if (yValue >= globalMin && yValue <= globalMax) {
                 const x = this.getX(xTime, minTime, maxTime);
-                const y = this.getY(yValue, globalMin, globalMax, layout.topY, layout.height);
+                const y = this.getY(yValue, globalMin, globalMax, area.y, area.height);
                 console.log(`X+Y event drawing at x=${x}, y=${y}`);
                 
                 // 이벤트 비교: label과 x, y 값으로 비교 (객체 참조가 다를 수 있음)
@@ -2010,84 +2026,163 @@ export class OverlayStockChart {
                     : this.config.eventArrowLineWidth)
                   : 2;
                 
-                // Y 위치가 차트의 상위 50%에 있으면 위쪽에 화살표 배치 (아래를 가리킴)
-                // Y 위치가 차트의 하위 50%에 있으면 아래쪽에 화살표 배치 (위를 가리킴)
-                const chartMidY = layout.topY + layout.height / 2;
+                // 마커 타입 결정 (기본값: 'tag')
+                const markerType = event.type || 'tag';
+                
+                // Y 위치가 차트의 상위 50%에 있으면 위쪽에 마커 배치 (아래를 가리킴)
+                // Y 위치가 차트의 하위 50%에 있으면 아래쪽에 마커 배치 (위를 가리킴)
+                const chartMidY = area.y + area.height / 2;
                 const pointsDown = y < chartMidY; // y가 작을수록 화면 상단 (상위 50%)
                 
-                // 화살표 위치 계산 (데이터 포인트에 붙여서 배치)
-                const arrowOffsetY = pointsDown ? -arrowSize * 0.8 : arrowSize * 0.8;
-                const arrowY = y + arrowOffsetY;
+                // 라벨 포맷 적용
+                const labelFormatted = this.config.eventLabelFormat 
+                  ? this.config.eventLabelFormat(event)
+                  : event.label;
+                const labelText = this.applyFormatResult(labelFormatted);
                 
-                // 화살표 그리기 (집 모양: 아래는 네모, 위는 삼각형)
-                this.ctx.save();
-                this.ctx.translate(x, arrowY);
-                
-                if (pointsDown) {
-                  // 아래를 가리키는 화살표 (데이터 포인트 위쪽에 배치) - 위는 네모, 아래는 삼각형
+                if (markerType === 'dot') {
+                  // === DOT 타입: 단순 점 ===
                   this.ctx.beginPath();
-                  // 네모 몸통 (위)
-                  this.ctx.moveTo(-arrowSize / 2, -arrowSize * 0.6); // 왼쪽 위
-                  this.ctx.lineTo(arrowSize / 2, -arrowSize * 0.6); // 오른쪽 위
-                  this.ctx.lineTo(arrowSize / 2, 0); // 오른쪽 중간
-                  // 삼각형 끝 (아래 - 데이터 포인트 방향)
-                  this.ctx.lineTo(0, arrowSize * 0.8); // 화살표 끝 (아래)
-                  this.ctx.lineTo(-arrowSize / 2, 0); // 왼쪽 중간
+                  this.ctx.arc(x, y, 5, 0, Math.PI * 2);
+                  this.ctx.fillStyle = arrowFillStyle;
+                  this.ctx.fill();
+                  this.ctx.strokeStyle = arrowStrokeStyle;
+                  this.ctx.lineWidth = arrowLineWidth;
+                  this.ctx.stroke();
+                  
+                  // 라벨 표시 (점 옆에)
+                  this.ctx.fillStyle = arrowStrokeStyle;
+                  this.ctx.font = 'bold 11px Arial';
+                  this.ctx.textAlign = 'left';
+                  this.ctx.textBaseline = 'middle';
+                  this.ctx.fillText(labelText, x + 8, y);
+                  
+                  // 클릭 가능한 영역 저장
+                  this.eventMarkers.push({ event, x, y, radius: 8 });
+                  
+                  // 호버 시 툴팁
+                  if (isHovered) {
+                    const tooltipY = pointsDown ? y + 15 : y - 15;
+                    this.eventTooltipsToRender.push({ event, x, y: tooltipY, pointsDown });
+                  }
+                  
+                } else if (markerType === 'arrow') {
+                  // === ARROW 타입: PointEvent처럼 단순한 화살표 (►) ===
+                  const arrowDirection = pointsDown ? 'down' : 'up';
+                  
+                  this.ctx.fillStyle = arrowStrokeStyle;
+                  this.ctx.beginPath();
+                  
+                  if (arrowDirection === 'down') {
+                    // 아래를 가리키는 화살표 ▼
+                    this.ctx.moveTo(x - 6, y - 8);
+                    this.ctx.lineTo(x, y);
+                    this.ctx.lineTo(x + 6, y - 8);
+                  } else {
+                    // 위를 가리키는 화살표 ▲
+                    this.ctx.moveTo(x - 6, y + 8);
+                    this.ctx.lineTo(x, y);
+                    this.ctx.lineTo(x + 6, y + 8);
+                  }
+                  
                   this.ctx.closePath();
+                  this.ctx.fill();
+                  
+                  // 라벨 표시 (화살표 옆에)
+                  this.ctx.fillStyle = arrowStrokeStyle;
+                  this.ctx.font = 'bold 11px Arial';
+                  this.ctx.textAlign = 'left';
+                  this.ctx.textBaseline = 'middle';
+                  const labelX = x + 10;
+                  const labelY = arrowDirection === 'down' ? y - 4 : y + 4;
+                  this.ctx.fillText(labelText, labelX, labelY);
+                  
+                  // 클릭 가능한 영역 저장
+                  this.eventMarkers.push({ event, x, y, radius: 10 });
+                  
+                  // 호버 시 툴팁
+                  if (isHovered) {
+                    const tooltipY = pointsDown ? y + 15 : y - 15;
+                    this.eventTooltipsToRender.push({ event, x, y: tooltipY, pointsDown });
+                  }
+                  
                 } else {
-                  // 위를 가리키는 화살표 (데이터 포인트 아래쪽에 배치) - 아래는 네모, 위는 삼각형
+                  // === TAG 타입: 화살표 + 텍스트 (기본) ===
+                  const arrowOffsetY = pointsDown ? -arrowSize * 0.8 : arrowSize * 0.8;
+                  const arrowY = y + arrowOffsetY;
+                  
+                  this.ctx.save();
+                  this.ctx.translate(x, arrowY);
+                  
+                  if (pointsDown) {
+                    // 아래를 가리키는 화살표
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(-arrowSize / 2, -arrowSize * 0.6);
+                    this.ctx.lineTo(arrowSize / 2, -arrowSize * 0.6);
+                    this.ctx.lineTo(arrowSize / 2, 0);
+                    this.ctx.lineTo(0, arrowSize * 0.8);
+                    this.ctx.lineTo(-arrowSize / 2, 0);
+                    this.ctx.closePath();
+                  } else {
+                    // 위를 가리키는 화살표
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(0, -arrowSize * 0.8);
+                    this.ctx.lineTo(-arrowSize / 2, 0);
+                    this.ctx.lineTo(-arrowSize / 2, arrowSize * 0.6);
+                    this.ctx.lineTo(arrowSize / 2, arrowSize * 0.6);
+                    this.ctx.lineTo(arrowSize / 2, 0);
+                    this.ctx.closePath();
+                  }
+                  
+                  this.ctx.fillStyle = arrowFillStyle;
+                  this.ctx.strokeStyle = arrowStrokeStyle;
+                  this.ctx.lineWidth = arrowLineWidth;
+                  this.ctx.fill();
+                  this.ctx.stroke();
+                  
+                  // 마커 내부 텍스트 표시 (첫 글자)
+                  const markerTextFormatted = this.config.eventMarkerTextFormat 
+                    ? this.config.eventMarkerTextFormat(event)
+                    : event.label.charAt(0).toUpperCase();
+                  const markerText = this.applyFormatResult(markerTextFormatted);
+                  
+                  const textFillStyle = isHovered ? '#FFFFFF' : arrowStrokeStyle;
+                  this.ctx.fillStyle = textFillStyle;
+                  this.ctx.font = 'bold 11px Arial';
+                  this.ctx.textAlign = 'center';
+                  this.ctx.textBaseline = 'middle';
+                  const textY = pointsDown ? -arrowSize * 0.15 : arrowSize * 0.15;
+                  this.ctx.fillText(markerText, 0, textY);
+                  
+                  this.ctx.restore();
+                  
+                  // 데이터 포인트에 작은 원
+                  const pointRadius = 3;
                   this.ctx.beginPath();
-                  // 삼각형 끝 (위 - 데이터 포인트 방향)
-                  this.ctx.moveTo(0, -arrowSize * 0.8); // 화살표 끝 (위)
-                  this.ctx.lineTo(-arrowSize / 2, 0); // 왼쪽 중간
-                  // 네모 몸통 (아래)
-                  this.ctx.lineTo(-arrowSize / 2, arrowSize * 0.6); // 왼쪽 아래
-                  this.ctx.lineTo(arrowSize / 2, arrowSize * 0.6); // 오른쪽 아래
-                  this.ctx.lineTo(arrowSize / 2, 0); // 오른쪽 중간
-                  this.ctx.closePath();
-                }
-                
-                // 화살표 채우기 및 테두리
-                this.ctx.fillStyle = arrowFillStyle;
-                this.ctx.strokeStyle = arrowStrokeStyle;
-                this.ctx.lineWidth = arrowLineWidth;
-                this.ctx.fill();
-                this.ctx.stroke();
-                
-                // 마커 내부 텍스트 표시 (기본: 첫 글자)
-                const markerTextFormatted = this.config.eventMarkerTextFormat 
-                  ? this.config.eventMarkerTextFormat(event)
-                  : event.label.charAt(0).toUpperCase();
-                const markerText = this.applyFormatResult(markerTextFormatted);
-                
-                // 텍스트 색상 (호버 시 반전)
-                const textFillStyle = isHovered ? '#FFFFFF' : arrowStrokeStyle;
-                this.ctx.fillStyle = textFillStyle;
-                this.ctx.font = 'bold 11px Arial';
-                this.ctx.textAlign = 'center';
-                this.ctx.textBaseline = 'middle';
-                const textY = pointsDown ? -arrowSize * 0.15 : arrowSize * 0.15;
-                this.ctx.fillText(markerText, 0, textY);
-                
-                this.ctx.restore();
-                
-                // 실제 데이터 포인트 위치에 작은 원 그리기
-                const pointRadius = 3;
-                this.ctx.beginPath();
-                this.ctx.arc(x, y, pointRadius, 0, Math.PI * 2);
-                this.ctx.fillStyle = arrowStrokeStyle;
-                this.ctx.fill();
-                this.ctx.strokeStyle = '#FFFFFF';
-                this.ctx.lineWidth = 1;
-                this.ctx.stroke();
-                
-                // 클릭 가능한 영역 저장 (화살표 전체 영역)
-                this.eventMarkers.push({ event, x, y: arrowY, radius: arrowSize * 1.2 });
-                
-                // 호버 또는 클릭 시 툴팁 정보 저장 (나중에 그리기)
-                if (isHovered) {
-                  const tooltipY = pointsDown ? arrowY + arrowSize * 0.8 : arrowY - arrowSize * 0.8;
-                  this.eventTooltipsToRender.push({ event, x, y: tooltipY, pointsDown });
+                  this.ctx.arc(x, y, pointRadius, 0, Math.PI * 2);
+                  this.ctx.fillStyle = arrowStrokeStyle;
+                  this.ctx.fill();
+                  this.ctx.strokeStyle = '#FFFFFF';
+                  this.ctx.lineWidth = 1;
+                  this.ctx.stroke();
+                  
+                  // 라벨 표시 (태그 옆에)
+                  this.ctx.fillStyle = arrowStrokeStyle;
+                  this.ctx.font = 'bold 11px Arial';
+                  this.ctx.textAlign = 'left';
+                  this.ctx.textBaseline = 'middle';
+                  const labelX = x + arrowSize / 2 + 5;
+                  const labelY = arrowY;
+                  this.ctx.fillText(labelText, labelX, labelY);
+                  
+                  // 클릭 가능한 영역 저장
+                  this.eventMarkers.push({ event, x, y: arrowY, radius: arrowSize * 1.2 });
+                  
+                  // 호버 시 툴팁
+                  if (isHovered) {
+                    const tooltipY = pointsDown ? arrowY + arrowSize * 0.8 : arrowY - arrowSize * 0.8;
+                    this.eventTooltipsToRender.push({ event, x, y: tooltipY, pointsDown });
+                  }
                 }
               } else {
                 // 범위 밖이면 경고 표시 (디버깅용)
@@ -2274,8 +2369,8 @@ export class OverlayStockChart {
   }
 
   drawXAxisLabels(
+    area: DrawArea,
     sortedTimes: number[],
-    chartBottom: number,
     displayMinTime?: number,
     displayMaxTime?: number
   ) {
@@ -2284,12 +2379,12 @@ export class OverlayStockChart {
     const minTime = displayMinTime ?? sortedTimes[0];
     const maxTime = displayMaxTime ?? sortedTimes[sortedTimes.length - 1];
 
-    const baselineY = chartBottom;
+    const baselineY = area.y;
     this.ctx.strokeStyle = '#000000';
     this.ctx.lineWidth = 1;
     this.ctx.beginPath();
-    this.ctx.moveTo(this.chartAreaLeft, baselineY);
-    this.ctx.lineTo(this.getChartRight(), baselineY);
+    this.ctx.moveTo(area.x, baselineY);
+    this.ctx.lineTo(area.x + area.width, baselineY);
     this.ctx.stroke();
 
     this.ctx.fillStyle = '#000000';
@@ -2348,6 +2443,7 @@ export class OverlayStockChart {
   }
 
   drawZoomButtons(
+    area: DrawArea,
     zoomStart: number, 
     zoomEnd: number, 
     displayMinTime?: number, 
@@ -2355,9 +2451,8 @@ export class OverlayStockChart {
   ): { type: string; x: number; y: number; width: number; height: number }[] {
     const buttonSize = 25;
     const buttonGap = 10;
-    const totalButtonWidth = buttonSize * 3 + buttonGap * 2;
-    const startX = (this.width - totalButtonWidth) / 2;
-    const startY = this.padding + 5;
+    const startX = area.x;
+    const startY = area.y;
     
     const zoomButtons: { type: string; x: number; y: number; width: number; height: number }[] = [];
     
@@ -2454,7 +2549,7 @@ export class OverlayStockChart {
   drawCrosshair(
     mouseX: number,
     mouseY: number,
-    chartLayouts: { key: string; topY: number; height: number }[],
+    chartAreas: Array<DrawArea & { key: string }>,
     sortedTimes: number[],
     displayMinTime?: number,
     displayMaxTime?: number
@@ -2463,8 +2558,8 @@ export class OverlayStockChart {
     
     // 마우스가 어느 차트 영역에 있는지 확인
     let isInChartArea = false;
-    for (const layout of chartLayouts) {
-      if (mouseY >= layout.topY && mouseY <= layout.topY + layout.height) {
+    for (const area of chartAreas) {
+      if (mouseY >= area.y && mouseY <= area.y + area.height) {
         isInChartArea = true;
         break;
       }
@@ -2472,8 +2567,8 @@ export class OverlayStockChart {
     
     if (!isInChartArea) return;
     
-    const chartBottom = chartLayouts.length > 0 
-      ? chartLayouts[chartLayouts.length - 1].topY + chartLayouts[chartLayouts.length - 1].height
+    const chartBottom = chartAreas.length > 0 
+      ? chartAreas[chartAreas.length - 1].y + chartAreas[chartAreas.length - 1].height
       : this.height - this.padding;
     
     this.ctx.strokeStyle = this.config.crosshairStrokeStyle || '#666666';
@@ -2515,16 +2610,16 @@ export class OverlayStockChart {
     let valueStr = '';
     
     // 마우스가 있는 차트 영역 찾기
-    for (const layout of chartLayouts) {
-      if (mouseY >= layout.topY && mouseY <= layout.topY + layout.height) {
-        const scaledValue = 1 - (mouseY - layout.topY) / layout.height;
+    for (const area of chartAreas) {
+      if (mouseY >= area.y && mouseY <= area.y + area.height) {
+        const scaledValue = 1 - (mouseY - area.y) / area.height;
         const normalizedValue = (scaledValue - this.chartMargin) / (1 - this.chartMargin * 2);
         
         if (this.state.normalize) {
           // 정규화 모드: 퍼센트 표시
           const valuePercent = normalizedValue * 100;
           const formatted = this.config.crosshairYFormat
-            ? this.config.crosshairYFormat(valuePercent, layout.key, true)
+            ? this.config.crosshairYFormat(valuePercent, area.key, true)
             : `${valuePercent.toFixed(1)}%`;
           valueStr = this.applyFormatResult(formatted);
         } else {
@@ -2534,7 +2629,7 @@ export class OverlayStockChart {
           let globalMax = -Infinity;
           
           this.dataMap.forEach((value) => {
-            const chartData = value.data[layout.key] || [];
+            const chartData = value.data[area.key] || [];
             const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
             if (values.length > 0) {
               globalMin = Math.min(globalMin, ...values);
@@ -2545,9 +2640,9 @@ export class OverlayStockChart {
           if (globalMin !== Infinity && globalMax !== -Infinity) {
             const actualValue = globalMin + normalizedValue * (globalMax - globalMin);
             const formatted = this.config.crosshairYFormat
-              ? this.config.crosshairYFormat(actualValue, layout.key, false)
+              ? this.config.crosshairYFormat(actualValue, area.key, false)
               : (this.config.yFormat 
-                ? this.config.yFormat(actualValue, 0, 1, layout.key) 
+                ? this.config.yFormat(actualValue, 0, 1, area.key) 
                 : actualValue.toLocaleString(undefined, { maximumFractionDigits: 2 }));
             valueStr = this.applyFormatResult(formatted);
           }
@@ -2567,7 +2662,7 @@ export class OverlayStockChart {
 
   drawDataPoints(
     visibleTickers: Set<string>,
-    chartLayouts: { key: string; topY: number; height: number }[],
+    chartAreas: Array<DrawArea & { key: string }>,
     sortedTimes: number[],
     displayMinTime?: number,
     displayMaxTime?: number
@@ -2584,10 +2679,10 @@ export class OverlayStockChart {
     const clipRight = this.width - this.padding;
 
     // 각 차트 레이아웃에 대해 포인트 그리기
-    chartLayouts.forEach(layout => {
-      const chartKey = layout.key;
-      const graphTop = layout.topY;
-      const graphHeight = layout.height;
+    chartAreas.forEach(area => {
+      const chartKey = area.key;
+      const graphTop = area.y;
+      const graphHeight = area.height;
 
       // 각 티커별 min/max 계산
       const minMaxBySymbol = new Map<string, { min: number; max: number }>();
@@ -2656,7 +2751,7 @@ export class OverlayStockChart {
 
   drawPointTooltip(
     point: { symbol: string; x: number; y: number; value: number; time: number; chartType: string },
-    canvasWidth: number
+    canvasArea: DrawArea
   ) {
     const xFormatted = this.config.tooltipXFormat
       ? this.config.tooltipXFormat(point.time, point.symbol, point.chartType)
@@ -2701,7 +2796,7 @@ export class OverlayStockChart {
     let tooltipX = point.x + 10;
     let tooltipY = point.y - tooltipHeight - 5;
     
-    if (tooltipX + tooltipWidth > canvasWidth - this.padding) {
+    if (tooltipX + tooltipWidth > canvasArea.width - this.padding) {
       tooltipX = point.x - tooltipWidth - 10;
     }
     if (tooltipY < this.padding) {
@@ -2882,11 +2977,30 @@ export class OverlayStockChart {
       // 이벤트 마커 호버 감지
       let foundEventMarker: EventMarker | null = null;
       for (const marker of this.eventMarkers) {
-        const dx = this.mouseX - marker.x;
-        const dy = this.mouseY - marker.y;
-        if (Math.sqrt(dx * dx + dy * dy) <= marker.radius) {
-          foundEventMarker = marker.event;
-          break;
+        // X-only 이벤트 (세로 라인)는 X축 거리만 체크
+        if (isXPointEvent(marker.event)) {
+          const dx = Math.abs(this.mouseX - marker.x);
+          if (dx <= marker.radius) {
+            foundEventMarker = marker.event;
+            break;
+          }
+        }
+        // Y-only 이벤트 (가로 라인)는 Y축 거리만 체크
+        else if (isYPointEvent(marker.event)) {
+          const dy = Math.abs(this.mouseY - marker.y);
+          if (dy <= marker.radius) {
+            foundEventMarker = marker.event;
+            break;
+          }
+        }
+        // 다른 이벤트는 원형 영역으로 체크
+        else {
+          const dx = this.mouseX - marker.x;
+          const dy = this.mouseY - marker.y;
+          if (Math.sqrt(dx * dx + dy * dy) <= marker.radius) {
+            foundEventMarker = marker.event;
+            break;
+          }
         }
       }
       this.hoveredEventMarker = foundEventMarker;
@@ -3075,9 +3189,26 @@ export class OverlayStockChart {
         
         // 이벤트 마커 클릭 확인
         for (const marker of this.eventMarkers) {
-          const dx = clickX - marker.x;
-          const dy = clickY - marker.y;
-          if (Math.sqrt(dx * dx + dy * dy) <= marker.radius) {
+          let isInside = false;
+          
+          // X-only 이벤트 (세로 라인)는 X축 거리만 체크
+          if (isXPointEvent(marker.event)) {
+            const dx = Math.abs(clickX - marker.x);
+            isInside = dx <= marker.radius;
+          }
+          // Y-only 이벤트 (가로 라인)는 Y축 거리만 체크
+          else if (isYPointEvent(marker.event)) {
+            const dy = Math.abs(clickY - marker.y);
+            isInside = dy <= marker.radius;
+          }
+          // 다른 이벤트는 원형 영역으로 체크
+          else {
+            const dx = clickX - marker.x;
+            const dy = clickY - marker.y;
+            isInside = Math.sqrt(dx * dx + dy * dy) <= marker.radius;
+          }
+          
+          if (isInside) {
             // 토글: 같은 마커를 클릭하면 닫기, 다른 마커를 클릭하면 열기
             this.hoveredEventMarker = this.hoveredEventMarker === marker.event ? null : marker.event;
             this.render();
@@ -3365,9 +3496,26 @@ export class OverlayStockChart {
           
           // 이벤트 마커 탭 확인
           for (const marker of this.eventMarkers) {
-            const dx = tapX - marker.x;
-            const dy = tapY - marker.y;
-            if (Math.sqrt(dx * dx + dy * dy) <= marker.radius) {
+            let isInside = false;
+            
+            // X-only 이벤트 (세로 라인)는 X축 거리만 체크
+            if (isXPointEvent(marker.event)) {
+              const dx = Math.abs(tapX - marker.x);
+              isInside = dx <= marker.radius;
+            }
+            // Y-only 이벤트 (가로 라인)는 Y축 거리만 체크
+            else if (isYPointEvent(marker.event)) {
+              const dy = Math.abs(tapY - marker.y);
+              isInside = dy <= marker.radius;
+            }
+            // 다른 이벤트는 원형 영역으로 체크
+            else {
+              const dx = tapX - marker.x;
+              const dy = tapY - marker.y;
+              isInside = Math.sqrt(dx * dx + dy * dy) <= marker.radius;
+            }
+            
+            if (isInside) {
               // 토글: 같은 마커를 탭하면 닫기, 다른 마커를 탭하면 열기
               this.hoveredEventMarker = this.hoveredEventMarker === marker.event ? null : marker.event;
               break;
@@ -3514,12 +3662,14 @@ export class OverlayStockChart {
     const availableHeight = totalHeight - this.paddingTop - xAxisLabelHeight;
     const heightPerChart = availableHeight / chartCount;
     
-    // 각 차트의 위치와 높이 계산
-    const chartLayouts: { key: string; topY: number; height: number }[] = [];
+    // 각 차트의 DrawArea 계산
+    const chartAreas: Array<DrawArea & { key: string }> = [];
     this.state.visibleChartKeys.forEach((key, index) => {
-      chartLayouts.push({
+      chartAreas.push({
         key,
-        topY: this.paddingTop + index * heightPerChart,
+        x: this.paddingLeft,
+        y: this.paddingTop + index * heightPerChart,
+        width: this.chartAreaWidth,
         height: heightPerChart
       });
     });
@@ -3649,14 +3799,13 @@ export class OverlayStockChart {
       displayMaxTime
     };
     
-    // 각 차트 그리기
+    // 각 차트 그리기 (DrawArea 전달)
     let firstChartResult: any = null;
-    chartLayouts.forEach((layout, index) => {
+    chartAreas.forEach((area, index) => {
       const result = this.drawChartKey(
-        layout.key,
+        area.key,
+        area,
         this.state.visibleTickers,
-        layout.topY,
-        layout.height,
         this.sortedTimes,
         chartOptions
       );
@@ -3667,44 +3816,68 @@ export class OverlayStockChart {
       }
     });
     
-    // Draw legend (첫 번째 차트 기준)
+    // 범례 영역 계산
+    const legendArea: DrawArea = {
+      x: this.paddingLeft + 10,
+      y: this.paddingTop - 25,
+      width: this.chartAreaWidth - 20,
+      height: 20
+    };
+    
+    // Draw legend (DrawArea 전달)
     if (firstChartResult) {
-      this.legendItems = this.drawLegend(firstChartResult.dataBySymbol, this.state.visibleTickers, []);
+      this.legendItems = this.drawLegend(legendArea, firstChartResult.dataBySymbol, this.state.visibleTickers);
     }
 
     // 차트 간 구분선 그리기
-    chartLayouts.forEach((layout, index) => {
+    chartAreas.forEach((area, index) => {
       if (index > 0) {
         this.ctx.strokeStyle = '#000000';
         this.ctx.lineWidth = 2;
         this.ctx.beginPath();
-        this.ctx.moveTo(this.chartAreaLeft, layout.topY);
-        this.ctx.lineTo(this.getChartRight(), layout.topY);
+        this.ctx.moveTo(area.x, area.y);
+        this.ctx.lineTo(area.x + area.width, area.y);
         this.ctx.stroke();
       }
     });
 
     // 차트 영역의 실제 하단 계산
-    const chartBottom = chartLayouts.length > 0 
-      ? chartLayouts[chartLayouts.length - 1].topY + chartLayouts[chartLayouts.length - 1].height
+    const chartBottom = chartAreas.length > 0 
+      ? chartAreas[chartAreas.length - 1].y + chartAreas[chartAreas.length - 1].height
       : totalHeight - xAxisLabelHeight;
     
-    // X축 레이블
-    this.drawXAxisLabels(this.sortedTimes, chartBottom, displayMinTime, displayMaxTime);
+    // X축 영역
+    const xAxisArea: DrawArea = {
+      x: this.paddingLeft,
+      y: chartBottom,
+      width: this.chartAreaWidth,
+      height: xAxisLabelHeight
+    };
+    
+    // X축 레이블 (DrawArea 전달)
+    this.drawXAxisLabels(xAxisArea, this.sortedTimes, displayMinTime, displayMaxTime);
 
     // 포인트 그리기
     if (this.state.showPoints) {
-      this.dataPoints = this.drawDataPoints(this.state.visibleTickers, chartLayouts, this.sortedTimes, displayMinTime, displayMaxTime);
+      this.dataPoints = this.drawDataPoints(this.state.visibleTickers, chartAreas, this.sortedTimes, displayMinTime, displayMaxTime);
     } else {
       this.dataPoints = [];
     }
 
     // 이벤트 마커 (포인트 위에 그려지도록)
-    this.drawEventMarkers(this.sortedTimes, chartBottom, this.state.showEvents, chartLayouts, displayMinTime, displayMaxTime);
+    this.drawEventMarkers(this.sortedTimes, chartBottom, this.state.showEvents, chartAreas, displayMinTime, displayMaxTime);
+
+    // 캔버스 전체 영역
+    const canvasArea: DrawArea = {
+      x: 0,
+      y: 0,
+      width: width,
+      height: totalHeight
+    };
 
     // 호버된 포인트 툴팁 표시
     if (this.state.showPoints && this.hoveredPoint) {
-      this.drawPointTooltip(this.hoveredPoint, width);
+      this.drawPointTooltip(this.hoveredPoint, canvasArea);
     }
 
     // 이벤트 툴팁 표시 (포인트 툴팁보다 나중에 그려서 맨 위에 표시)
@@ -3712,15 +3885,26 @@ export class OverlayStockChart {
       this.drawEventTooltip(tooltip.event, tooltip.x, tooltip.y, tooltip.pointsDown);
     });
 
-    // 줌 버튼 그리기
-    this.zoomButtons = this.drawZoomButtons(this.zoomStart, this.zoomEnd, displayMinTime, displayMaxTime);
+    // 줌 버튼 영역
+    const buttonSize = 25;
+    const buttonGap = 10;
+    const totalButtonWidth = buttonSize * 3 + buttonGap * 2;
+    const zoomButtonArea: DrawArea = {
+      x: (width - totalButtonWidth) / 2,
+      y: this.paddingTop + 5,
+      width: totalButtonWidth,
+      height: buttonSize
+    };
+
+    // 줌 버튼 그리기 (DrawArea 전달)
+    this.zoomButtons = this.drawZoomButtons(zoomButtonArea, this.zoomStart, this.zoomEnd, displayMinTime, displayMaxTime);
 
     // 드래그 선택 영역 그리기
     this.drawDragSelection(this.isDragging, this.dragStartX, this.dragCurrentX, chartBottom);
 
     // 크로스헤어 그리기
     if (this.mouseX !== null && this.mouseY !== null && !this.isDragging && !this.isPanning) {
-      this.drawCrosshair(this.mouseX, this.mouseY, chartLayouts, this.sortedTimes, displayMinTime, displayMaxTime);
+      this.drawCrosshair(this.mouseX, this.mouseY, chartAreas, this.sortedTimes, displayMinTime, displayMaxTime);
     }
     
     // 데이터 복원
