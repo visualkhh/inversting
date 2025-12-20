@@ -2268,17 +2268,11 @@ export class OverlayStockChart {
         
         if (area) {
           // Y 값을 화면 좌표로 변환
-          // 이벤트에 심볼이 지정된 경우 해당 심볼의 데이터만 사용 (정규화 모드 대응)
-          // 심볼이 없으면 첫 번째 visible ticker 사용 (없으면 enabled ticker 사용)
           let globalMin = Infinity, globalMax = -Infinity;
           
-          const useSymbol = event.symbol || 
-                           Array.from(this.state.visibleTickers)[0] || 
-                           Array.from(this.state.enabledTickers)[0];
-          
-          if (useSymbol) {
+          if (event.symbol) {
             // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
-            const symbolData = this.dataMap.get(useSymbol);
+            const symbolData = this.dataMap.get(event.symbol);
             if (symbolData) {
               const chartDataObj = symbolData.data[chartKey];
               if (chartDataObj) {
@@ -2289,6 +2283,18 @@ export class OverlayStockChart {
                 }
               }
             }
+          } else {
+            // 공통 이벤트: 모든 티커의 데이터 범위를 합쳐서 사용
+            this.dataMap.forEach((value) => {
+              const chartDataObj = value.data[chartKey];
+              if (chartDataObj) {
+                const values = chartDataObj.datas.map(d => d.y).filter(v => v !== null && v !== undefined);
+                if (values.length > 0) {
+                  globalMin = Math.min(globalMin, ...values);
+                  globalMax = Math.max(globalMax, ...values);
+                }
+              }
+            });
           }
           
           if (globalMin !== Infinity && globalMax !== -Infinity) {
