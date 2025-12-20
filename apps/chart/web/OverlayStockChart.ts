@@ -308,6 +308,7 @@ export class OverlayStockChart {
     initialState: RenderState,
     config?: ChartConfig
   ) {
+    console.log('data!!', dataMap, commonEvents)
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
     this.width = 0;
@@ -1093,6 +1094,7 @@ export class OverlayStockChart {
     
     const textMetrics = this.ctx.measureText(event.label);
     const textWidth = textMetrics.width;
+    const textHeight = 12; // 대략적인 텍스트 높이
     
     // 배경 스타일 적용 (설정된 경우에만)
     const bgStyle = this.config.eventRangeLabelBackgroundStyle
@@ -1118,12 +1120,27 @@ export class OverlayStockChart {
     this.ctx.fillText(event.label, align === 'center' ? x : x, y);
     this.ctx.restore();
     
-    // 클릭 가능한 영역 저장
+    // 라벨 영역을 사각형으로 저장 (Range 이벤트 전용)
+    const labelX = align === 'center' ? x : x + textWidth / 2;
+    const labelY = y + textHeight / 2;
+    
+    // Range 이벤트임을 표시하는 특별한 마커 등록
+    const rangeEvent = {
+      ...event,
+      isRangeLabel: true,
+      labelRect: {
+        x: align === 'center' ? x - textWidth / 2 : x,
+        y: y,
+        width: textWidth,
+        height: textHeight
+      }
+    } as any;
+    
     this.eventMarkers.push({ 
-      event, 
-      x, 
-      y, 
-      radius: Math.max(textWidth / 2, 20) 
+      event: rangeEvent, 
+      x: labelX, 
+      y: labelY, 
+      radius: Math.max(textWidth / 2, 10)
     });
   }
 
@@ -1249,28 +1266,60 @@ export class OverlayStockChart {
           const area = chartAreas.find(a => a.key === chartKey);
           
           if (area) {
+            // 이벤트에 심볼이 지정된 경우 해당 심볼의 데이터만 사용
+            // 심볼이 없으면 모든 티커의 데이터 범위를 합쳐서 사용
             let globalMin = Infinity, globalMax = -Infinity;
-            this.dataMap.forEach((value) => {
-              const chartData = value.data[chartKey] || [];
-              const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-              if (values.length > 0) {
-                globalMin = Math.min(globalMin, ...values);
-                globalMax = Math.max(globalMax, ...values);
+            
+            if (event.symbol) {
+              // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
+              const symbolData = this.dataMap.get(event.symbol);
+              if (symbolData) {
+                const chartData = symbolData.data[chartKey] || [];
+                const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
+                if (values.length > 0) {
+                  globalMin = Math.min(...values);
+                  globalMax = Math.max(...values);
+                }
               }
-            });
+            } else {
+              // 공통 이벤트: 모든 티커의 데이터 범위를 합쳐서 사용
+              this.dataMap.forEach((value) => {
+                const chartData = value.data[chartKey] || [];
+                const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
+                if (values.length > 0) {
+                  globalMin = Math.min(globalMin, ...values);
+                  globalMax = Math.max(globalMax, ...values);
+                }
+              });
+            }
+            
+            console.log(`[XYRange] Event "${event.label}": event.symbol=${event.symbol}, range=${globalMin}-${globalMax}`);
             
             if (globalMin !== Infinity && globalMax !== -Infinity) {
+              // 정규화 모드에서는 Y 값을 0-100% 범위로 변환
+              let normalizedStartY = startY;
+              let normalizedEndY = endY;
+              
+              if (this.state.normalize) {
+                // startY, endY를 globalMin~globalMax 범위에서 0~100 범위로 변환
+                normalizedStartY = ((startY - globalMin) / (globalMax - globalMin)) * 100;
+                normalizedEndY = ((endY - globalMin) / (globalMax - globalMin)) * 100;
+                // 변환된 값을 다시 0~100 범위의 min/max로 사용
+                globalMin = 0;
+                globalMax = 100;
+              }
+              
               // Y 범위가 차트 데이터 범위와 겹치는지 확인
-              const rangeMin = Math.min(startY, endY);
-              const rangeMax = Math.max(startY, endY);
+              const rangeMin = Math.min(normalizedStartY, normalizedEndY);
+              const rangeMax = Math.max(normalizedStartY, normalizedEndY);
               
               // 범위가 차트 범위와 전혀 겹치지 않으면 그리지 않음
               if (rangeMax < globalMin || rangeMin > globalMax) {
                 return;
               }
               
-              const y1Raw = this.getY(startY, globalMin, globalMax, area.y, area.height);
-              const y2Raw = this.getY(endY, globalMin, globalMax, area.y, area.height);
+              const y1Raw = this.getY(normalizedStartY, globalMin, globalMax, area.y, area.height);
+              const y2Raw = this.getY(normalizedEndY, globalMin, globalMax, area.y, area.height);
               
               // Y 좌표를 차트 영역 내로 제한
               const y1 = Math.max(area.y, Math.min(area.y + area.height, y1Raw));
@@ -1405,28 +1454,60 @@ export class OverlayStockChart {
         const area = chartAreas.find(a => a.key === chartKey);
         
         if (area) {
+          // 이벤트에 심볼이 지정된 경우 해당 심볼의 데이터만 사용
+          // 심볼이 없으면 모든 티커의 데이터 범위를 합쳐서 사용
           let globalMin = Infinity, globalMax = -Infinity;
-          this.dataMap.forEach((value) => {
-            const chartData = value.data[chartKey] || [];
-            const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-            if (values.length > 0) {
-              globalMin = Math.min(globalMin, ...values);
-              globalMax = Math.max(globalMax, ...values);
+          
+          if (event.symbol) {
+            // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
+            const symbolData = this.dataMap.get(event.symbol);
+            if (symbolData) {
+              const chartData = symbolData.data[chartKey] || [];
+              const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
+              if (values.length > 0) {
+                globalMin = Math.min(...values);
+                globalMax = Math.max(...values);
+              }
             }
-          });
+          } else {
+            // 공통 이벤트: 모든 티커의 데이터 범위를 합쳐서 사용
+            this.dataMap.forEach((value) => {
+              const chartData = value.data[chartKey] || [];
+              const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
+              if (values.length > 0) {
+                globalMin = Math.min(globalMin, ...values);
+                globalMax = Math.max(globalMax, ...values);
+              }
+            });
+          }
+          
+          console.log(`[YRange] Event "${event.label}": event.symbol=${event.symbol}, range=${globalMin}-${globalMax}`);
           
           if (globalMin !== Infinity && globalMax !== -Infinity) {
+            // 정규화 모드에서는 Y 값을 0-100% 범위로 변환
+            let normalizedStartY = startY;
+            let normalizedEndY = endY;
+            
+            if (this.state.normalize) {
+              // startY, endY를 globalMin~globalMax 범위에서 0~100 범위로 변환
+              normalizedStartY = ((startY - globalMin) / (globalMax - globalMin)) * 100;
+              normalizedEndY = ((endY - globalMin) / (globalMax - globalMin)) * 100;
+              // 변환된 값을 다시 0~100 범위의 min/max로 사용
+              globalMin = 0;
+              globalMax = 100;
+            }
+            
             // Y 범위가 차트 데이터 범위와 겹치는지 확인
-            const rangeMin = Math.min(startY, endY);
-            const rangeMax = Math.max(startY, endY);
+            const rangeMin = Math.min(normalizedStartY, normalizedEndY);
+            const rangeMax = Math.max(normalizedStartY, normalizedEndY);
             
             // 범위가 차트 범위와 전혀 겹치지 않으면 그리지 않음
             if (rangeMax < globalMin || rangeMin > globalMax) {
               return;
             }
             
-            const y1Raw = this.getY(startY, globalMin, globalMax, area.y, area.height);
-            const y2Raw = this.getY(endY, globalMin, globalMax, area.y, area.height);
+            const y1Raw = this.getY(normalizedStartY, globalMin, globalMax, area.y, area.height);
+            const y2Raw = this.getY(normalizedEndY, globalMin, globalMax, area.y, area.height);
             
             // Y 좌표를 차트 영역 내로 제한
             const y1 = Math.max(area.y, Math.min(area.y + area.height, y1Raw));
@@ -1530,17 +1611,43 @@ export class OverlayStockChart {
       if (!area) return;
       
       // 차트 데이터 범위 계산
+      // 이벤트에 심볼이 지정된 경우 해당 심볼의 데이터만 사용
+      // 심볼이 없으면 모든 티커의 데이터 범위를 합쳐서 사용
       let globalMin = Infinity, globalMax = -Infinity;
-      this.dataMap.forEach((value) => {
-        const chartData = value.data[chartKey] || [];
-        const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-        if (values.length > 0) {
-          globalMin = Math.min(globalMin, ...values);
-          globalMax = Math.max(globalMax, ...values);
+      
+      if (event.symbol) {
+        // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
+        const symbolData = this.dataMap.get(event.symbol);
+        if (symbolData) {
+          const chartData = symbolData.data[chartKey] || [];
+          const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
+          if (values.length > 0) {
+            globalMin = Math.min(...values);
+            globalMax = Math.max(...values);
+          }
         }
-      });
+      } else {
+        // 공통 이벤트: 모든 티커의 데이터 범위를 합쳐서 사용
+        this.dataMap.forEach((value) => {
+          const chartData = value.data[chartKey] || [];
+          const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
+          if (values.length > 0) {
+            globalMin = Math.min(globalMin, ...values);
+            globalMax = Math.max(globalMax, ...values);
+          }
+        });
+      }
       
       if (globalMin === Infinity || globalMax === -Infinity) return;
+      
+      // 정규화 모드에서는 Y 값을 0-100% 범위로 변환
+      const originalMin = globalMin;
+      const originalMax = globalMax;
+      
+      if (this.state.normalize) {
+        globalMin = 0;
+        globalMax = 100;
+      }
       
       // 클리핑 적용
       this.ctx.save();
@@ -1559,27 +1666,41 @@ export class OverlayStockChart {
       
       // 경로 그리기
       this.ctx.beginPath();
-      let firstPoint = true;
       
       event.points.forEach((point, index) => {
         const x = this.getX(point.x, minTime, maxTime);
-        const y = this.getY(point.y, globalMin, globalMax, area.y, area.height);
         
-        if (firstPoint) {
+        // 정규화 모드에서는 Y 값을 변환
+        let normalizedY = point.y;
+        if (this.state.normalize) {
+          normalizedY = ((point.y - originalMin) / (originalMax - originalMin)) * 100;
+        }
+        
+        const y = this.getY(normalizedY, globalMin, globalMax, area.y, area.height);
+        
+        if (index === 0) {
           this.ctx.moveTo(x, y);
-          firstPoint = false;
         } else {
-          if (event.smooth && index > 0) {
-            // 부드러운 곡선 (quadratic curve)
+          if (event.smooth) {
+            // 부드러운 베지에 곡선
             const prevPoint = event.points[index - 1];
             const prevX = this.getX(prevPoint.x, minTime, maxTime);
-            const prevY = this.getY(prevPoint.y, globalMin, globalMax, area.y, area.height);
-            const cpX = (prevX + x) / 2;
-            const cpY = (prevY + y) / 2;
-            this.ctx.quadraticCurveTo(prevX, prevY, cpX, cpY);
-            if (index === event.points.length - 1) {
-              this.ctx.lineTo(x, y);
+            
+            // 정규화 모드에서는 Y 값을 변환
+            let prevNormalizedY = prevPoint.y;
+            if (this.state.normalize) {
+              prevNormalizedY = ((prevPoint.y - originalMin) / (originalMax - originalMin)) * 100;
             }
+            
+            const prevY = this.getY(prevNormalizedY, globalMin, globalMax, area.y, area.height);
+            
+            // 제어점 계산 (라인 그래프와 동일한 방식)
+            const cp1x = prevX + (x - prevX) / 3;
+            const cp1y = prevY;
+            const cp2x = prevX + (x - prevX) * 2 / 3;
+            const cp2y = y;
+            
+            this.ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
           } else {
             this.ctx.lineTo(x, y);
           }
@@ -1599,39 +1720,61 @@ export class OverlayStockChart {
       }
       
       // 포인트 마커 그리기 및 호버 영역 등록
+      // fillStyle이 없는 경우에만 개별 포인트를 호버 영역으로 등록
+      if (!fillStyle) {
+        event.points.forEach((point, index) => {
+          const x = this.getX(point.x, minTime, maxTime);
+          
+          // 정규화 모드에서는 Y 값을 변환
+          let normalizedY = point.y;
+          if (this.state.normalize) {
+            normalizedY = ((point.y - originalMin) / (originalMax - originalMin)) * 100;
+          }
+          
+          const y = this.getY(normalizedY, globalMin, globalMax, area.y, area.height);
+          
+          const pointEvent = { 
+            ...event, 
+            x: point.x, 
+            y: point.y,
+            pointIndex: index 
+          } as any;
+          
+          this.eventMarkers.push({
+            event: pointEvent,
+            x,
+            y,
+            radius: 8
+          });
+          
+          // 호버 시 툴팁 정보 저장
+          const isHovered = this.hoveredEventMarker !== null && 
+            this.hoveredEventMarker.label === event.label &&
+            (this.hoveredEventMarker as any).x === point.x &&
+            (this.hoveredEventMarker as any).y === point.y;
+          
+          if (isHovered) {
+            this.eventTooltipsToRender.push({ 
+              event: pointEvent, 
+              x, 
+              y: y - 10, 
+              pointsDown: false 
+            });
+          }
+        });
+      }
+      
+      // 포인트 타입 마커 그리기
       event.points.forEach((point, index) => {
         const x = this.getX(point.x, minTime, maxTime);
-        const y = this.getY(point.y, globalMin, globalMax, area.y, area.height);
         
-        // 호버 가능한 영역 등록 (모든 포인트)
-        const pointEvent = { 
-          ...event, 
-          x: point.x, 
-          y: point.y,
-          pointIndex: index 
-        } as any;
-        
-        this.eventMarkers.push({
-          event: pointEvent,
-          x,
-          y,
-          radius: 8
-        });
-        
-        // 호버 시 툴팁 정보 저장
-        const isHovered = this.hoveredEventMarker !== null && 
-          this.hoveredEventMarker.label === event.label &&
-          (this.hoveredEventMarker as any).x === point.x &&
-          (this.hoveredEventMarker as any).y === point.y;
-        
-        if (isHovered) {
-          this.eventTooltipsToRender.push({ 
-            event: pointEvent, 
-            x, 
-            y: y - 10, 
-            pointsDown: false 
-          });
+        // 정규화 모드에서는 Y 값을 변환
+        let normalizedY = point.y;
+        if (this.state.normalize) {
+          normalizedY = ((point.y - originalMin) / (originalMax - originalMin)) * 100;
         }
+        
+        const y = this.getY(normalizedY, globalMin, globalMax, area.y, area.height);
         
         if (point.xPointType || point.yPointType) {
           const pointType = point.xPointType || point.yPointType || 'dot';
@@ -1723,11 +1866,65 @@ export class OverlayStockChart {
       
       this.ctx.restore();
       
-      // 첫 번째 포인트에 라벨 그리기
-      if (event.points.length > 0) {
+      // fillStyle이 있는 경우: 라벨 영역만 호버/클릭 가능
+      // fillStyle이 없는 경우: 개별 포인트 호버/클릭 가능 (이미 위에서 등록됨)
+      if (fillStyle && event.points.length > 0) {
         const firstPoint = event.points[0];
         const labelX = this.getX(firstPoint.x, minTime, maxTime);
-        const labelY = this.getY(firstPoint.y, globalMin, globalMax, area.y, area.height);
+        
+        // 정규화 모드에서는 Y 값을 변환
+        let normalizedY = firstPoint.y;
+        if (this.state.normalize) {
+          normalizedY = ((firstPoint.y - originalMin) / (originalMax - originalMin)) * 100;
+        }
+        
+        const labelY = this.getY(normalizedY, globalMin, globalMax, area.y, area.height);
+        
+        // 라벨 포맷 적용
+        const labelFormatted = this.config.eventLabelFormat 
+          ? this.config.eventLabelFormat(event)
+          : event.label;
+        const labelText = this.applyFormatResult(labelFormatted);
+        
+        this.ctx.fillStyle = strokeStyle;
+        this.ctx.font = 'bold 11px Arial';
+        this.ctx.textAlign = 'left';
+        this.ctx.textBaseline = 'bottom';
+        const textMetrics = this.ctx.measureText(labelText);
+        this.ctx.fillText(labelText, labelX + 5, labelY - 5);
+        
+        // 라벨 영역을 호버 영역으로 등록
+        this.eventMarkers.push({
+          event,
+          x: labelX + 5 + textMetrics.width / 2,
+          y: labelY - 5 - 6, // 텍스트 높이 고려
+          radius: Math.max(textMetrics.width / 2, 10)
+        });
+        
+        // 호버 시 툴팁 정보 저장
+        const isHovered = this.hoveredEventMarker !== null && 
+          this.hoveredEventMarker.label === event.label;
+        
+        if (isHovered) {
+          this.eventTooltipsToRender.push({ 
+            event, 
+            x: labelX + 5 + textMetrics.width / 2, 
+            y: labelY - 20, 
+            pointsDown: false 
+          });
+        }
+      } else if (event.points.length > 0) {
+        // fillStyle이 없는 경우에도 라벨 그리기
+        const firstPoint = event.points[0];
+        const labelX = this.getX(firstPoint.x, minTime, maxTime);
+        
+        // 정규화 모드에서는 Y 값을 변환
+        let normalizedY = firstPoint.y;
+        if (this.state.normalize) {
+          normalizedY = ((firstPoint.y - originalMin) / (originalMax - originalMin)) * 100;
+        }
+        
+        const labelY = this.getY(normalizedY, globalMin, globalMax, area.y, area.height);
         
         // 라벨 포맷 적용
         const labelFormatted = this.config.eventLabelFormat 
@@ -1867,20 +2064,42 @@ export class OverlayStockChart {
         
         if (area) {
           // Y 값을 화면 좌표로 변환
+          // 이벤트에 심볼이 지정된 경우 해당 심볼의 데이터만 사용 (정규화 모드 대응)
+          // 심볼이 없으면 첫 번째 visible ticker 사용 (없으면 enabled ticker 사용)
           let globalMin = Infinity, globalMax = -Infinity;
-          this.dataMap.forEach((value) => {
-            const chartData = value.data[chartKey] || [];
-            const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-            if (values.length > 0) {
-              globalMin = Math.min(globalMin, ...values);
-              globalMax = Math.max(globalMax, ...values);
+          
+          const useSymbol = event.symbol || 
+                           Array.from(this.state.visibleTickers)[0] || 
+                           Array.from(this.state.enabledTickers)[0];
+          
+          if (useSymbol) {
+            // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
+            const symbolData = this.dataMap.get(useSymbol);
+            if (symbolData) {
+              const chartData = symbolData.data[chartKey] || [];
+              const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
+              if (values.length > 0) {
+                globalMin = Math.min(...values);
+                globalMax = Math.max(...values);
+              }
             }
-          });
+          }
           
           if (globalMin !== Infinity && globalMax !== -Infinity) {
             console.log(`Y-only event range: min=${globalMin}, max=${globalMax}, yValue=${yValue}`);
+            
+            // 정규화 모드에서는 Y 값을 0-100% 범위로 변환
+            let normalizedYValue = yValue;
+            if (this.state.normalize) {
+              // yValue를 globalMin~globalMax 범위에서 0~100 범위로 변환
+              normalizedYValue = ((yValue - globalMin) / (globalMax - globalMin)) * 100;
+              // 변환된 값을 다시 0~100 범위의 min/max로 사용
+              globalMin = 0;
+              globalMax = 100;
+            }
+            
             // Y 값이 범위를 벗어나도 표시 (가로선은 항상 보이는 것이 유용)
-            const y = this.getY(yValue, globalMin, globalMax, area.y, area.height);
+            const y = this.getY(normalizedYValue, globalMin, globalMax, area.y, area.height);
             console.log(`Y-only event drawing at y=${y}`);
             
             // 스타일 적용
@@ -1979,22 +2198,53 @@ export class OverlayStockChart {
           
           if (area) {
             // Y 값을 화면 좌표로 변환
+            // 이벤트에 심볼이 지정된 경우 해당 심볼의 데이터만 사용
+            // 심볼이 없으면 모든 visible/enabled 티커의 데이터 범위를 합쳐서 사용
             let globalMin = Infinity, globalMax = -Infinity;
-            this.dataMap.forEach((value) => {
-              const chartData = value.data[chartKey] || [];
-              const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
-              if (values.length > 0) {
-                globalMin = Math.min(globalMin, ...values);
-                globalMax = Math.max(globalMax, ...values);
+            
+            if (event.symbol) {
+              // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
+              const symbolData = this.dataMap.get(event.symbol);
+              if (symbolData) {
+                const chartData = symbolData.data[chartKey] || [];
+                const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
+                if (values.length > 0) {
+                  globalMin = Math.min(...values);
+                  globalMax = Math.max(...values);
+                }
               }
-            });
+            } else {
+              // 공통 이벤트: 모든 티커의 데이터 범위를 합쳐서 사용
+              this.dataMap.forEach((value) => {
+                const chartData = value.data[chartKey] || [];
+                const values = chartData.map(d => d.y).filter(v => v !== null && v !== undefined);
+                if (values.length > 0) {
+                  globalMin = Math.min(globalMin, ...values);
+                  globalMax = Math.max(globalMax, ...values);
+                }
+              });
+            }
+            
+            console.log(`[XYPoint] Event "${event.label}": event.symbol=${event.symbol}, range=${globalMin}-${globalMax}, yValue=${yValue}`);
             
             if (globalMin !== Infinity && globalMax !== -Infinity) {
               console.log(`X+Y event range: min=${globalMin}, max=${globalMax}, yValue=${yValue}`);
+              
+              // 정규화 모드에서는 Y 값을 0-100% 범위로 변환
+              let normalizedYValue = yValue;
+              if (this.state.normalize) {
+                // yValue를 globalMin~globalMax 범위에서 0~100 범위로 변환
+                normalizedYValue = ((yValue - globalMin) / (globalMax - globalMin)) * 100;
+                console.log(`[NORMALIZE] XY Event "${event.label}" symbol=${event.symbol}: yValue=${yValue} -> ${normalizedYValue}% (range: ${globalMin}-${globalMax})`);
+                // 변환된 값을 다시 0~100 범위의 min/max로 사용
+                globalMin = 0;
+                globalMax = 100;
+              }
+              
               // Y 값이 범위 내에 있는지 확인
-              if (yValue >= globalMin && yValue <= globalMax) {
+              if (normalizedYValue >= globalMin && normalizedYValue <= globalMax) {
                 const x = this.getX(xTime, minTime, maxTime);
-                const y = this.getY(yValue, globalMin, globalMax, area.y, area.height);
+                const y = this.getY(normalizedYValue, globalMin, globalMax, area.y, area.height);
                 console.log(`X+Y event drawing at x=${x}, y=${y}`);
                 
                 // 이벤트 비교: label과 x, y 값으로 비교 (객체 참조가 다를 수 있음)
@@ -2830,7 +3080,7 @@ export class OverlayStockChart {
 
   private zoomIn(focusX?: number) {
     const range = this.zoomEnd - this.zoomStart;
-    if (range <= 10) return;
+    if (range <= 1) return; // 최소 1%까지 확대 가능 (기존 10%에서 변경)
     
     let focusPercent: number;
     if (focusX !== undefined) {
@@ -2977,8 +3227,17 @@ export class OverlayStockChart {
       // 이벤트 마커 호버 감지
       let foundEventMarker: EventMarker | null = null;
       for (const marker of this.eventMarkers) {
+        // Range 이벤트 라벨 (사각형 영역 체크)
+        if ((marker.event as any).isRangeLabel && (marker.event as any).labelRect) {
+          const rect = (marker.event as any).labelRect;
+          if (this.mouseX >= rect.x && this.mouseX <= rect.x + rect.width &&
+              this.mouseY >= rect.y && this.mouseY <= rect.y + rect.height) {
+            foundEventMarker = marker.event;
+            break;
+          }
+        }
         // X-only 이벤트 (세로 라인)는 X축 거리만 체크
-        if (isXPointEvent(marker.event)) {
+        else if (isXPointEvent(marker.event)) {
           const dx = Math.abs(this.mouseX - marker.x);
           if (dx <= marker.radius) {
             foundEventMarker = marker.event;
@@ -3191,8 +3450,14 @@ export class OverlayStockChart {
         for (const marker of this.eventMarkers) {
           let isInside = false;
           
+          // Range 이벤트 라벨 (사각형 영역 체크)
+          if ((marker.event as any).isRangeLabel && (marker.event as any).labelRect) {
+            const rect = (marker.event as any).labelRect;
+            isInside = clickX >= rect.x && clickX <= rect.x + rect.width &&
+                       clickY >= rect.y && clickY <= rect.y + rect.height;
+          }
           // X-only 이벤트 (세로 라인)는 X축 거리만 체크
-          if (isXPointEvent(marker.event)) {
+          else if (isXPointEvent(marker.event)) {
             const dx = Math.abs(clickX - marker.x);
             isInside = dx <= marker.radius;
           }
@@ -3498,8 +3763,14 @@ export class OverlayStockChart {
           for (const marker of this.eventMarkers) {
             let isInside = false;
             
+            // Range 이벤트 라벨 (사각형 영역 체크)
+            if ((marker.event as any).isRangeLabel && (marker.event as any).labelRect) {
+              const rect = (marker.event as any).labelRect;
+              isInside = tapX >= rect.x && tapX <= rect.x + rect.width &&
+                         tapY >= rect.y && tapY <= rect.y + rect.height;
+            }
             // X-only 이벤트 (세로 라인)는 X축 거리만 체크
-            if (isXPointEvent(marker.event)) {
+            else if (isXPointEvent(marker.event)) {
               const dx = Math.abs(tapX - marker.x);
               isInside = dx <= marker.radius;
             }
