@@ -399,12 +399,14 @@
         <input type="checkbox" id="toggle-obv" /> OBV
       </label>
       <span class="radio-group">
-        <label><input type="radio" name="smooth-mode" value="none" checked /> 직선</label>
-        <label><input type="radio" name="smooth-mode" value="smooth" /> 부드럽게</label>
-        <label><input type="radio" name="smooth-mode" value="open" /> 시작가</label>
-        <label><input type="radio" name="smooth-mode" value="high" /> 최고가</label>
-        <label><input type="radio" name="smooth-mode" value="low" /> 최저가</label>
-        <label><input type="radio" name="smooth-mode" value="middle" /> 중간가</label>
+        <label><input type="radio" name="line-mode" value="line" checked /> 직선</label>
+        <label><input type="radio" name="line-mode" value="line-smooth" /> 부드럽게</label>
+        <label><input type="radio" name="line-mode" value="line-smooth-open" /> 시작가</label>
+        <label><input type="radio" name="line-mode" value="line-smooth-high" /> 최고가</label>
+        <label><input type="radio" name="line-mode" value="line-smooth-low" /> 최저가</label>
+        <label><input type="radio" name="line-mode" value="line-smooth-middle" /> 중간가</label>
+        <label><input type="radio" name="line-mode" value="step-to" /> 계단(to)</label>
+        <label><input type="radio" name="line-mode" value="step-from" /> 계단(from)</label>
       </span>
       <label for="toggle-average" id="toggle-average-label">
         <input type="checkbox" id="toggle-average" /> 평균선

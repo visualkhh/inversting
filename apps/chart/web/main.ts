@@ -14,7 +14,7 @@ const toggleCandlesEl = document.getElementById('toggle-candles') as HTMLInputEl
 const toggleGapsEl = document.getElementById('toggle-gaps') as HTMLInputElement | null;
 const toggleVolumeEl = document.getElementById('toggle-volume') as HTMLInputElement | null;
 const toggleOBVEl = document.getElementById('toggle-obv') as HTMLInputElement | null;
-const smoothModeRadios = document.querySelectorAll('input[name="smooth-mode"]') as NodeListOf<HTMLInputElement>;
+const lineModeRadios = document.querySelectorAll('input[name="line-mode"]') as NodeListOf<HTMLInputElement>;
 const toggleAverageEl = document.getElementById('toggle-average') as HTMLInputElement | null;
 const toggleHideValuesEl = document.getElementById('toggle-hide-values') as HTMLInputElement | null;
 const toggleDailyGroupEl = document.getElementById('toggle-daily-group') as HTMLInputElement | null;
@@ -330,7 +330,7 @@ let showEvents = false;
 let showCandles = false;
 let showGaps = true;
 let visibleChartKeys = ['price', 'volume', 'obv']; // 표시할 차트 키들
-let smoothMode: 'none' | 'smooth' | 'open' | 'high' | 'low' | 'middle' = 'none';
+let lineMode: 'line' | 'line-smooth' | 'line-smooth-open' | 'line-smooth-high' | 'line-smooth-low' | 'line-smooth-middle' | 'step-to' | 'step-from' = 'line';
 let showAverage = false;
 let hideValues = false;
 let dailyGroup = false;
@@ -369,7 +369,7 @@ let rangeMax = 100;
       showCandles,
       showGaps,
       visibleChartKeys,
-      smoothMode,
+      lineMode,
       showAverage,
       hideValues,
       dailyGroup,
@@ -552,15 +552,15 @@ let rangeMax = 100;
     });
   }
 
-  if (smoothModeRadios.length > 0) {
-    smoothModeRadios.forEach(radio => {
-      if (radio.value === smoothMode) {
+  if (lineModeRadios.length > 0) {
+    lineModeRadios.forEach(radio => {
+      if (radio.value === lineMode) {
         radio.checked = true;
       }
       radio.addEventListener('change', () => {
         if (radio.checked) {
-          smoothMode = radio.value as 'none' | 'smooth' | 'open' | 'high' | 'low' | 'middle';
-          overlayChart?.updateState({ smoothMode });
+          lineMode = radio.value as 'line' | 'line-smooth' | 'line-smooth-open' | 'line-smooth-high' | 'line-smooth-low' | 'line-smooth-middle' | 'step-to' | 'step-from';
+          overlayChart?.updateState({ lineMode });
         }
       });
     });

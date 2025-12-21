@@ -131,7 +131,7 @@ interface ChartOptions {
   fillGaps?: boolean;
   showVolume?: boolean;
   showOBV?: boolean;
-  smoothMode?: 'none' | 'smooth' | 'open' | 'high' | 'low' | 'middle';
+  lineMode?: 'line' | 'line-smooth' | 'line-smooth-open' | 'line-smooth-high' | 'line-smooth-low' | 'line-smooth-middle' | 'step-to' | 'step-from';
   showAverage?: boolean;
   hideValues?: boolean;
   hideLines?: boolean;
@@ -216,7 +216,7 @@ interface RenderState {
   showCandles: boolean;
   showGaps: boolean;
   visibleChartKeys: string[]; // 표시할 차트 키 목록 (순서대로)
-  smoothMode: 'none' | 'smooth' | 'open' | 'high' | 'low' | 'middle';
+  lineMode: 'line' | 'line-smooth' | 'line-smooth-open' | 'line-smooth-high' | 'line-smooth-low' | 'line-smooth-middle' | 'step-to' | 'step-from';
   showAverage: boolean;
   hideValues: boolean;
   dailyGroup: boolean;
@@ -552,7 +552,7 @@ export class OverlayStockChart {
     const {
       showCandles = false,
       fillGaps = false,
-      smoothMode = 'none',
+      lineMode = 'line',
       showAverage = false,
       hideValues = false,
       hideLines = false,
@@ -692,13 +692,13 @@ export class OverlayStockChart {
 
       // 라인
       if (!hideLines) {
-        this.drawLine(sortedPoints, minMax, color, minTime, maxTime, timeRange, sortedTimes.length, graphTop, graphHeight, fillGaps, smoothMode, symbol, chartKey);
+        this.drawLine(sortedPoints, minMax, color, minTime, maxTime, timeRange, sortedTimes.length, graphTop, graphHeight, fillGaps, lineMode, symbol, chartKey);
       }
     });
 
     // 평균선
     if (showAverage && dataBySymbol.size > 0) {
-      this.drawAverageLine(dataBySymbol, minMaxBySymbol, sortedTimes, minTime, maxTime, graphTop, graphHeight, smoothMode);
+      this.drawAverageLine(dataBySymbol, minMaxBySymbol, sortedTimes, minTime, maxTime, graphTop, graphHeight, lineMode);
     }
 
     return { dataBySymbol, minMaxBySymbol, sortedTimes };
@@ -876,7 +876,7 @@ export class OverlayStockChart {
     topY: number,
     height: number,
     fillGaps: boolean,
-    smoothMode: string,
+    lineMode: 'line' | 'line-smooth' | 'line-smooth-open' | 'line-smooth-high' | 'line-smooth-low' | 'line-smooth-middle' | 'step-to' | 'step-from',
     symbol?: string,
     chartKey?: string
   ) {
@@ -933,9 +933,18 @@ export class OverlayStockChart {
         const prevY = this.getY(prevPoint.close, minMax.min, minMax.max, topY, height);
         this.ctx.moveTo(prevX, prevY);
         
-        if (smoothMode !== 'none') {
-          this.drawBezierCurve(prevX, prevY, x, y, point, minMax, topY, height, smoothMode);
+        if (lineMode.startsWith('line-smooth')) {
+          this.drawBezierCurve(prevX, prevY, x, y, point, minMax, topY, height, lineMode);
+        } else if (lineMode === 'step-to') {
+          // step-to: 수평선 -> 수직선
+          this.ctx.lineTo(x, prevY); // 수평선
+          this.ctx.lineTo(x, y);     // 수직선
+        } else if (lineMode === 'step-from') {
+          // step-from: 수직선 -> 수평선
+          this.ctx.lineTo(prevX, y); // 수직선
+          this.ctx.lineTo(x, y);     // 수평선
         } else {
+          // line: 직선
           this.ctx.lineTo(x, y);
         }
         
@@ -946,11 +955,21 @@ export class OverlayStockChart {
         this.ctx.beginPath();
         this.ctx.moveTo(x, y);
       } else {
-        if (smoothMode !== 'none') {
+        if (lineMode.startsWith('line-smooth')) {
           const prevX = this.getX(prevPoint.time, minTime, maxTime);
           const prevY = this.getY(prevPoint.close, minMax.min, minMax.max, topY, height);
-          this.drawBezierCurve(prevX, prevY, x, y, point, minMax, topY, height, smoothMode);
+          this.drawBezierCurve(prevX, prevY, x, y, point, minMax, topY, height, lineMode);
+        } else if (lineMode === 'step-to') {
+          // step-to: 수평선 -> 수직선
+          this.ctx.lineTo(x, this.getY(prevPoint.close, minMax.min, minMax.max, topY, height)); // 수평선
+          this.ctx.lineTo(x, y);     // 수직선
+        } else if (lineMode === 'step-from') {
+          // step-from: 수직선 -> 수평선
+          const prevX = this.getX(prevPoint.time, minTime, maxTime);
+          this.ctx.lineTo(prevX, y); // 수직선
+          this.ctx.lineTo(x, y);     // 수평선
         } else {
+          // line: 직선
           this.ctx.lineTo(x, y);
         }
       }
@@ -969,20 +988,20 @@ export class OverlayStockChart {
     minMax: { min: number; max: number },
     topY: number,
     height: number,
-    smoothMode: string
+    lineMode: string
   ) {
     const cp1x = prevX + (x - prevX) / 3;
     const cp1y = prevY;
     const cp2x = prevX + (x - prevX) * 2 / 3;
     let cp2y: number;
     
-    if (smoothMode === 'open' && point.open && point.open > 0) {
+    if (lineMode === 'line-smooth-open' && point.open && point.open > 0) {
       cp2y = this.getY(point.open, minMax.min, minMax.max, topY, height);
-    } else if (smoothMode === 'high' && point.high && point.high > 0) {
+    } else if (lineMode === 'line-smooth-high' && point.high && point.high > 0) {
       cp2y = this.getY(point.high, minMax.min, minMax.max, topY, height);
-    } else if (smoothMode === 'low' && point.low && point.low > 0) {
+    } else if (lineMode === 'line-smooth-low' && point.low && point.low > 0) {
       cp2y = this.getY(point.low, minMax.min, minMax.max, topY, height);
-    } else if (smoothMode === 'middle' && point.high && point.low) {
+    } else if (lineMode === 'line-smooth-middle' && point.high && point.low) {
       cp2y = this.getY((point.high + point.low) / 2, minMax.min, minMax.max, topY, height);
     } else {
       cp2y = y;
@@ -999,7 +1018,7 @@ export class OverlayStockChart {
     maxTime: number,
     topY: number,
     height: number,
-    smoothMode: string
+    lineMode: string
   ) {
     const avgPoints: { time: number; avgY: number }[] = [];
     
@@ -4349,7 +4368,7 @@ export class OverlayStockChart {
     const chartOptions: ChartOptions = {
       showCandles: this.state.showCandles,
       fillGaps: this.state.showGaps,
-      smoothMode: this.state.smoothMode,
+      lineMode: this.state.lineMode,
       showAverage: this.state.showAverage,
       hideValues: this.state.hideValues,
       hideLines: this.state.hideLines,
