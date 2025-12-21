@@ -841,7 +841,8 @@ export class OverlayStockChart {
       }
 
       // High-Low 라인
-      this.ctx.globalAlpha = 0.3;
+      this.ctx.globalAlpha = 1; // 0.3
+      // this.ctx.globalAlpha = 0.3; // 0.3
       this.ctx.strokeStyle = borderColor;
       this.ctx.lineWidth = 1;
       this.ctx.beginPath();
@@ -850,7 +851,7 @@ export class OverlayStockChart {
       this.ctx.stroke();
 
       // Open-Close 캔들 바디
-      const candleWidth = 3;
+      const candleWidth = 2;
       this.ctx.strokeStyle = borderColor;
       this.ctx.fillStyle = isUp ? upColor : downColor;
       
@@ -3200,7 +3201,7 @@ export class OverlayStockChart {
     const minTime = displayMinTime ?? sortedTimes[0];
     const maxTime = displayMaxTime ?? sortedTimes[sortedTimes.length - 1];
 
-    const pointRadius = 2;
+    const pointRadius = 3;
     const clipLeft = this.padding;
     const clipRight = this.width - this.padding;
 
