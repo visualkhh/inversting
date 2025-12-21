@@ -465,7 +465,7 @@ let rangeMax = 100;
         paddingLeft: 100,
         paddingRight: 100,
         // paddingTop: 100,
-        // paddingBottom: 100,
+        // paddingBottom: 40,
         xFormat: (xValue: number, index, total) => {
           if (index !==0 && index !== total-1 && index % Math.ceil(total / 2) !== 0) {
             return '';

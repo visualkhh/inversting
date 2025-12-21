@@ -1166,42 +1166,64 @@ export class OverlayStockChart {
     dataBySymbol: Map<string, any>,
     visibleTickers: Set<string>
   ): { symbol: string; x: number; y: number; width: number; height: number }[] {
-    const legendX = area.x;
-    const legendY = area.y;
-    const legendLineWidth = 15;
-    const legendItemWidth = 80;
+    const legendBoxSize = 10; // 정사각형 크기
     const legendHeight = 16;
-    let legendColorIndex = 0;
+    const lineSpacing = -5; // 라인 간격
+    const itemSpacing = 10; // 아이템 간 간격
+    const textMargin = 5; // 정사각형과 텍스트 사이 간격
     const newLegendItems: { symbol: string; x: number; y: number; width: number; height: number }[] = [];
     
     this.ctx.textAlign = 'left';
     this.ctx.textBaseline = 'middle';
     this.ctx.font = '11px Arial';
     
+    let currentX = area.x;
+    let currentY = area.y;
+    let currentLineMaxHeight = legendHeight;
+    const maxWidth = area.x + area.width;
+    
     dataBySymbol.forEach((_, symbol) => {
       const color = this.getTickerColor(symbol);
       const isVisible = visibleTickers.has(symbol);
-      const itemX = legendX + legendColorIndex * legendItemWidth;
+      
+      // 텍스트 너비 측정
+      const textWidth = this.ctx.measureText(symbol).width;
+      const itemWidth = legendBoxSize + textMargin + textWidth + itemSpacing; // 정사각형 + 간격 + 텍스트 + 아이템 간격
+      
+      // 현재 줄에 공간이 부족하면 다음 줄로
+      if (currentX + itemWidth > maxWidth && currentX > area.x) {
+        currentX = area.x;
+        currentY += currentLineMaxHeight + lineSpacing;
+        currentLineMaxHeight = legendHeight;
+      }
+      
+      const itemX = currentX;
       
       newLegendItems.push({
         symbol,
         x: itemX - 5,
-        y: legendY - legendHeight / 2,
-        width: legendItemWidth - 5,
+        y: currentY - legendHeight / 2,
+        width: itemWidth,
         height: legendHeight
       });
       
       this.ctx.globalAlpha = isVisible ? 1.0 : 0.3;
-      this.ctx.strokeStyle = color;
-      this.ctx.lineWidth = 2;
-      this.ctx.beginPath();
-      this.ctx.moveTo(itemX, legendY);
-      this.ctx.lineTo(itemX + legendLineWidth, legendY);
-      this.ctx.stroke();
+      
+      // 정사각형 그리기 (채우기)
+      this.ctx.fillStyle = color;
+      this.ctx.fillRect(
+        itemX, 
+        currentY - legendBoxSize / 2, 
+        legendBoxSize, 
+        legendBoxSize
+      );
+      
+      // 텍스트 그리기
       this.ctx.fillStyle = isVisible ? '#000000' : '#999999';
-      this.ctx.fillText(symbol, itemX + legendLineWidth + 5, legendY);
+      this.ctx.fillText(symbol, itemX + legendBoxSize + textMargin, currentY);
       this.ctx.globalAlpha = 1.0;
-      legendColorIndex++;
+      
+      currentX += itemWidth;
     });
     
     return newLegendItems;
@@ -3519,7 +3541,8 @@ export class OverlayStockChart {
       this.mouseY = e.clientY - rect.top;
       
       if (this.isDragging && this.dragStartX !== null) {
-        this.dragCurrentX = Math.max(this.padding, Math.min(this.canvasWidth - this.padding, this.mouseX));
+        // 드래그 현재 위치를 차트 영역 내로 제한
+        this.dragCurrentX = Math.max(this.chartAreaLeft, Math.min(this.getChartRight(), this.mouseX));
         this.render();
         return;
       }
@@ -3682,8 +3705,9 @@ export class OverlayStockChart {
       if (this.isInChartArea(x, y)) {
         if (this.zoomStart === 0 && this.zoomEnd === 100) {
           this.isDragging = true;
-          this.dragStartX = x;
-          this.dragCurrentX = x;
+          // 드래그 시작 위치를 차트 영역 내로 제한
+          this.dragStartX = Math.max(this.chartAreaLeft, Math.min(this.getChartRight(), x));
+          this.dragCurrentX = this.dragStartX;
         } else {
           this.isPanning = true;
           this.panStartX = x;
@@ -3744,9 +3768,77 @@ export class OverlayStockChart {
 
     // 클릭
     this.canvas.addEventListener('click', (e: MouseEvent) => {
+      console.log('[click] 이벤트 발생', {
+        x: e.clientX,
+        y: e.clientY,
+        zoomStart: this.zoomStart,
+        zoomEnd: this.zoomEnd
+      });
+      
       const rect = this.canvas.getBoundingClientRect();
       const clickX = e.clientX - rect.left;
       const clickY = e.clientY - rect.top;
+      
+      // 더블클릭 감지 (click 이벤트 기반)
+      const currentTime = Date.now();
+      const timeDiff = currentTime - this.lastTapTime;
+      const dx = clickX - this.lastTapX;
+      const dy = clickY - this.lastTapY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      const tapThreshold = 300; // 300ms 이내
+      const distanceThreshold = 30; // 30px 이내
+      
+      console.log('[click] 더블클릭 체크', {
+        timeDiff,
+        distance,
+        isDoubleClick: timeDiff < tapThreshold && distance < distanceThreshold,
+        isInChartArea: this.isInChartArea(clickX, clickY),
+        isZoomed: this.zoomStart > 0 || this.zoomEnd < 100
+      });
+      
+      if (timeDiff < tapThreshold && distance < distanceThreshold) {
+        // 더블클릭 감지됨
+        console.log('[click] 더블클릭 감지됨!');
+        
+        // 줌 버튼 영역이면 무시
+        let isZoomButton = false;
+        for (const btn of this.zoomButtons) {
+          if (clickX >= btn.x && clickX <= btn.x + btn.width &&
+              clickY >= btn.y && clickY <= btn.y + btn.height) {
+            isZoomButton = true;
+            break;
+          }
+        }
+        
+        // 범례 영역이면 무시
+        let isLegend = false;
+        for (const item of this.legendItems) {
+          if (clickX >= item.x && clickX <= item.x + item.width &&
+              clickY >= item.y && clickY <= item.y + item.height) {
+            isLegend = true;
+            break;
+          }
+        }
+        
+        if (!isZoomButton && !isLegend && this.isInChartArea(clickX, clickY) && (this.zoomStart > 0 || this.zoomEnd < 100)) {
+          console.log('[click] 줌 리셋 실행');
+          this.lastTapTime = 0; // 초기화
+          this.zoomReset();
+          return;
+        } else {
+          console.log('[click] 줌 리셋 조건 불만족', {
+            isZoomButton,
+            isLegend,
+            isInChartArea: this.isInChartArea(clickX, clickY),
+            isZoomed: this.zoomStart > 0 || this.zoomEnd < 100
+          });
+        }
+      }
+      
+      // 마지막 클릭 정보 저장
+      this.lastTapTime = currentTime;
+      this.lastTapX = clickX;
+      this.lastTapY = clickY;
 
       // 줌 버튼은 즉시 처리 (더블클릭 대기 없음)
       for (const btn of this.zoomButtons) {
@@ -3858,8 +3950,18 @@ export class OverlayStockChart {
       }, this.clickDelay);
     });
 
-    // 더블클릭 (PC)
+    // 더블클릭 (PC 및 모바일 모드)
     this.canvas.addEventListener('dblclick', (e: MouseEvent) => {
+      console.log('[dblclick] 이벤트 발생', {
+        x: e.clientX,
+        y: e.clientY,
+        zoomStart: this.zoomStart,
+        zoomEnd: this.zoomEnd,
+        isInChartArea: this.isInChartArea(e.clientX - this.canvas.getBoundingClientRect().left, e.clientY - this.canvas.getBoundingClientRect().top)
+      });
+      
+      e.preventDefault(); // 기본 동작 방지
+      
       const rect = this.canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
@@ -3874,13 +3976,29 @@ export class OverlayStockChart {
       for (const btn of this.zoomButtons) {
         if (x >= btn.x && x <= btn.x + btn.width &&
             y >= btn.y && y <= btn.y + btn.height) {
+          console.log('[dblclick] 줌 버튼 영역 - 무시');
+          return;
+        }
+      }
+
+      // 범례 영역이면 무시
+      for (const item of this.legendItems) {
+        if (x >= item.x && x <= item.x + item.width &&
+            y >= item.y && y <= item.y + item.height) {
+          console.log('[dblclick] 범례 영역 - 무시');
           return;
         }
       }
 
       // 확대 상태에서 차트 영역을 더블클릭하면 초기화
       if (this.isInChartArea(x, y) && (this.zoomStart > 0 || this.zoomEnd < 100)) {
+        console.log('[dblclick] 줌 리셋 실행');
         this.zoomReset();
+      } else {
+        console.log('[dblclick] 줌 리셋 조건 불만족', {
+          isInChartArea: this.isInChartArea(x, y),
+          isZoomed: this.zoomStart > 0 || this.zoomEnd < 100
+        });
       }
     });
 
@@ -3902,12 +4020,19 @@ export class OverlayStockChart {
 
     // 터치 시작
     this.canvas.addEventListener('touchstart', (e: TouchEvent) => {
+      console.log('[touchstart] 이벤트 발생', {
+        touches: e.touches.length,
+        zoomStart: this.zoomStart,
+        zoomEnd: this.zoomEnd
+      });
+      
       const rect = this.canvas.getBoundingClientRect();
       const touch = e.touches[0];
       const x = touch.clientX - rect.left;
       const y = touch.clientY - rect.top;
 
       if (e.touches.length === 2) {
+        console.log('[touchstart] 핀치 제스처 감지');
         this.lastPinchDistance = this.getPinchDistance(e.touches);
         this.isTouchDragging = false;
         this.isTouchPanning = false;
@@ -3917,6 +4042,7 @@ export class OverlayStockChart {
       for (const btn of this.zoomButtons) {
         if (x >= btn.x && x <= btn.x + btn.width &&
             y >= btn.y && y <= btn.y + btn.height) {
+          console.log('[touchstart] 줌 버튼 영역');
           return;
         }
       }
@@ -3927,8 +4053,9 @@ export class OverlayStockChart {
         
         if (this.zoomStart === 0 && this.zoomEnd === 100) {
           this.isTouchDragging = true;
-          this.dragStartX = x;
-          this.dragCurrentX = x;
+          // 드래그 시작 위치를 차트 영역 내로 제한
+          this.dragStartX = Math.max(this.chartAreaLeft, Math.min(this.getChartRight(), x));
+          this.dragCurrentX = this.dragStartX;
         } else {
           this.isTouchPanning = true;
           this.panStartX = x;
@@ -3966,7 +4093,8 @@ export class OverlayStockChart {
 
       if (this.isTouchDragging && this.dragStartX !== null) {
         e.preventDefault();
-        this.dragCurrentX = Math.max(this.padding, Math.min(this.canvasWidth - this.padding, x));
+        // 드래그 현재 위치를 차트 영역 내로 제한
+        this.dragCurrentX = Math.max(this.chartAreaLeft, Math.min(this.getChartRight(), x));
         this.isDragging = true;
         this.render();
         return;
@@ -4051,9 +4179,21 @@ export class OverlayStockChart {
           const dy = tapY - this.lastTapY;
           const distance = Math.sqrt(dx * dx + dy * dy);
           
+          console.log('[touchend] 더블탭 체크', {
+            timeDiff,
+            distance,
+            tapThreshold,
+            distanceThreshold,
+            isDoubleTap: timeDiff < tapThreshold && distance < distanceThreshold,
+            isInChartArea: this.isInChartArea(tapX, tapY),
+            isZoomed: this.zoomStart > 0 || this.zoomEnd < 100
+          });
+          
           if (timeDiff < tapThreshold && distance < distanceThreshold) {
             // 더블탭 감지됨 - 확대 상태에서 차트 영역이면 초기화
+            console.log('[touchend] 더블탭 감지됨!');
             if (this.isInChartArea(tapX, tapY) && (this.zoomStart > 0 || this.zoomEnd < 100)) {
+              console.log('[touchend] 줌 리셋 실행');
               this.zoomReset();
               this.lastTapTime = 0; // 초기화
               this.isTouchDragging = false;
@@ -4063,6 +4203,8 @@ export class OverlayStockChart {
               this.touchStartX = null;
               this.touchStartY = null;
               return;
+            } else {
+              console.log('[touchend] 줌 리셋 조건 불만족');
             }
           }
           
@@ -4393,12 +4535,12 @@ export class OverlayStockChart {
       }
     });
     
-    // 범례 영역 계산
+    // 범례 영역 계산 (캔버스 왼쪽 끝부터 시작, 여러 줄 지원)
     const legendArea: DrawArea = {
-      x: this.paddingLeft + 10,
+      x: 10, // 캔버스 왼쪽 끝에서 10px 여백
       y: this.paddingTop - 25,
-      width: this.chartAreaWidth - 20,
-      height: 20
+      width: this.canvasWidth - 20, // 캔버스 전체 너비 사용
+      height: 60 // 최대 3줄 정도 표시 가능하도록 충분한 높이
     };
     
     // Draw legend (DrawArea 전달)
