@@ -103,13 +103,13 @@ export class StockLoader {
 
     const result = await yf.chart(symbol, chartOptions);
 
-    const quotes = result.quotes;
+    const quotes = (result as any).quotes;
     const aggregatedData: AggregatedData[] = [];
     let tempData: any[] = [];
     let currentTime: string | null = null;
     let obv = 0;
 
-    quotes.forEach((row) => {
+    quotes.forEach((row: any) => {
       const timestamp = new Date(row.date);
       const minute = timestamp.getMinutes();
       const tenMinBucket = Math.floor(minute / 10) * 10;
@@ -298,14 +298,15 @@ export class StockLoader {
         }
 
         // Earnings
-        if (result.events?.earnings) {
-          for (const [timestamp, earning] of Object.entries(result.events.earnings)) {
+        if ((result.events as any)?.earnings) {
+          for (const [timestamp, earning] of Object.entries((result.events as any).earnings)) {
+            const earningData = earning as any;
             const date = new Date(parseInt(timestamp) * 1000);
             const timestampStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} 09:00:00`;
-            const actual = earning.actual !== undefined ? earning.actual.toFixed(2) : 'N/A';
-            const estimate = earning.estimate !== undefined ? earning.estimate.toFixed(2) : 'N/A';
-            const diff = (earning.actual !== undefined && earning.estimate !== undefined) 
-              ? (earning.actual - earning.estimate).toFixed(2) 
+            const actual = earningData.actual !== undefined ? earningData.actual.toFixed(2) : 'N/A';
+            const estimate = earningData.estimate !== undefined ? earningData.estimate.toFixed(2) : 'N/A';
+            const diff = (earningData.actual !== undefined && earningData.estimate !== undefined) 
+              ? (earningData.actual - earningData.estimate).toFixed(2) 
               : '';
             const surprise = diff && parseFloat(diff) > 0 ? ' ✓' : diff && parseFloat(diff) < 0 ? ' ✗' : '';
             events.push({
@@ -393,8 +394,8 @@ export class StockLoader {
             if (earning.quarter) {
               const date = new Date(earning.quarter);
               const timestamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} 09:00:00`;
-              const epsActual = earning.epsActual?.fmt || '';
-              const epsEstimate = earning.epsEstimate?.fmt || '';
+              const epsActual = (earning.epsActual as any)?.fmt || '';
+              const epsEstimate = (earning.epsEstimate as any)?.fmt || '';
               events.push({
                 timestamp,
                 label: `${symbol} Q Earnings ${epsActual}/${epsEstimate}`,
@@ -408,7 +409,7 @@ export class StockLoader {
         if (result.upgradeDowngradeHistory?.history) {
           for (const upgrade of result.upgradeDowngradeHistory.history.slice(0, 5)) { // 최근 5개만
             if (upgrade.epochGradeDate) {
-              const date = new Date(upgrade.epochGradeDate * 1000);
+              const date = new Date((upgrade.epochGradeDate as any) * 1000);
               const timestamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} 09:00:00`;
               const action = upgrade.action || '';
               const toGrade = upgrade.toGrade || '';
@@ -426,7 +427,7 @@ export class StockLoader {
         if (result.secFilings?.filings) {
           for (const filing of result.secFilings.filings.slice(0, 3)) { // 최근 3개만
             if (filing.epochDate) {
-              const date = new Date(filing.epochDate * 1000);
+              const date = new Date((filing.epochDate as any) * 1000);
               const timestamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} 09:00:00`;
               const type = filing.type || '';
               events.push({
@@ -439,8 +440,8 @@ export class StockLoader {
         }
 
         // Insider Transactions (내부자 거래)
-        if (result.insiderTransactions?.transactions) {
-          for (const transaction of result.insiderTransactions.transactions.slice(0, 3)) { // 최근 3개만
+        if ((result as any).insiderTransactions?.transactions) {
+          for (const transaction of (result as any).insiderTransactions.transactions.slice(0, 3)) { // 최근 3개만
             if (transaction.startDate) {
               const date = new Date(transaction.startDate);
               const timestamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} 09:00:00`;

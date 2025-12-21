@@ -9,6 +9,22 @@ type ChartData = {
 // 라인 타입 정의
 export type LineType = 'line' | 'line-smooth' | 'line-smooth-open' | 'line-smooth-high' | 'line-smooth-low' | 'line-smooth-middle' | 'step-to' | 'step-from' | 'step-center';
 
+// 차트 키별 데이터 타입
+export type ChartKeyData = {
+  datas: ChartData[];
+  events?: EventMarker[];
+  lineMode?: LineType;
+};
+
+// 티커 데이터 타입 (단일 또는 다중 차트 키 지원)
+export type TickerData = {
+  color?: string;
+  lineMode?: LineType;
+  data: ChartKeyData | {
+    [key: string]: ChartKeyData;
+  };
+};
+
 // 공통 이벤트 속성
 export interface EventBase {
   label: string;
@@ -78,41 +94,25 @@ type EventMarker =
   | (PointEvent & EventBase);
 
 // 타입 가드 함수
-function isXPointEvent(event: EventMarker): event is XPointEvent & EventBase {
-  return 'x' in event && !('y' in event) && !('startX' in event) && !('startY' in event);
-}
+export const isChartKeyData = (data: ChartKeyData | { [key: string]: ChartKeyData }): data is ChartKeyData => 'datas' in data && Array.isArray(data.datas);
 
-function isYPointEvent(event: EventMarker): event is YPointEvent & EventBase {
-  return 'y' in event && !('x' in event) && !('startX' in event) && !('startY' in event);
-}
+export const isXPointEvent = (event: EventMarker): event is XPointEvent & EventBase => 'x' in event && !('y' in event) && !('startX' in event) && !('startY' in event);
 
-function isXYPointEvent(event: EventMarker): event is XYPointEvent & EventBase {
-  return 'x' in event && 'y' in event && !('startX' in event) && !('startY' in event) && !('points' in event);
-}
+export const isYPointEvent = (event: EventMarker): event is YPointEvent & EventBase => 'y' in event && !('x' in event) && !('startX' in event) && !('startY' in event);
 
-function isXRangeEvent(event: EventMarker): event is XRangeEvent & EventBase {
-  return 'startX' in event && 'endX' in event && !('startY' in event) && !('endY' in event) && !('points' in event);
-}
+export const isXYPointEvent = (event: EventMarker): event is XYPointEvent & EventBase => 'x' in event && 'y' in event && !('startX' in event) && !('startY' in event) && !('points' in event);
 
-function isYRangeEvent(event: EventMarker): event is YRangeEvent & EventBase {
-  return 'startY' in event && 'endY' in event && !('startX' in event) && !('endX' in event) && !('points' in event);
-}
+export const isXRangeEvent = (event: EventMarker): event is XRangeEvent & EventBase => 'startX' in event && 'endX' in event && !('startY' in event) && !('endY' in event) && !('points' in event);
 
-function isXYRangeEvent(event: EventMarker): event is XYRangeEvent & EventBase {
-  return 'startX' in event && 'endX' in event && 'startY' in event && 'endY' in event && !('points' in event);
-}
+export const isYRangeEvent = (event: EventMarker): event is YRangeEvent & EventBase => 'startY' in event && 'endY' in event && !('startX' in event) && !('endX' in event) && !('points' in event);
 
-function isRangeEvent(event: EventMarker): event is (XRangeEvent | YRangeEvent | XYRangeEvent) & EventBase {
-  return isXRangeEvent(event) || isYRangeEvent(event) || isXYRangeEvent(event);
-}
+export const isXYRangeEvent = (event: EventMarker): event is XYRangeEvent & EventBase => 'startX' in event && 'endX' in event && 'startY' in event && 'endY' in event && !('points' in event);
 
-function isMultiPointEvent(event: EventMarker): event is PointEvent & EventBase {
-  return 'points' in event && Array.isArray((event as any).points);
-}
+export const isRangeEvent = (event: EventMarker): event is (XRangeEvent | YRangeEvent | XYRangeEvent) & EventBase => isXRangeEvent(event) || isYRangeEvent(event) || isXYRangeEvent(event);
 
-function isPointEvent(event: EventMarker): event is (XPointEvent | YPointEvent | XYPointEvent) & EventBase {
-  return !isRangeEvent(event) && !isMultiPointEvent(event);
-}
+export const isMultiPointEvent = (event: EventMarker): event is PointEvent & EventBase => 'points' in event && Array.isArray((event as any).points);
+
+export const isPointEvent = (event: EventMarker): event is (XPointEvent | YPointEvent | XYPointEvent) & EventBase => !isRangeEvent(event) && !isMultiPointEvent(event);
 
 // 그리기 영역 정의
 interface DrawArea {
@@ -281,13 +281,9 @@ export class OverlayStockChart {
   private chartMargin = 0.1;
   private dataMap: Map<string, { 
     color?: string;
-    lineMode?: LineType; // 티커별 라인 모드 (우선순위 중간)
+    lineMode?: LineType;
     data: { 
-      [key: string]: {
-        datas: ChartData[];
-        events?: EventMarker[];
-        lineMode?: LineType; // chartKey별 라인 모드 (우선순위 최고)
-      }
+      [key: string]: ChartKeyData;
     }
   }>;
   private commonEvents: CommonEvents;
@@ -335,21 +331,7 @@ export class OverlayStockChart {
 
   constructor(
     canvas: HTMLCanvasElement,
-    dataMap: Map<string, { 
-      color?: string;
-      lineMode?: LineType; // 티커별 라인 모드
-      data: { 
-        [key: string]: {
-          datas: ChartData[];
-          events?: EventMarker[];
-          lineMode?: LineType; // chartKey별 라인 모드
-        }
-      } | {
-        datas: ChartData[];
-        events?: EventMarker[];
-        lineMode?: LineType; // 단일 데이터의 경우
-      }
-    }>,
+    dataMap: Map<string, TickerData>,
     options: OverlayStockChartOptions = {}
   ) {
     const {
@@ -423,60 +405,36 @@ export class OverlayStockChart {
 
   // main.ts에서 받은 데이터를 내부 형식으로 변환
   private normalizeDataMap(
-    inputMap: Map<string, { 
-      color?: string;
-      lineMode?: LineType;
-      data: { 
-        [key: string]: {
-          datas: ChartData[];
-          events?: EventMarker[];
-          lineMode?: LineType;
-        }
-      } | {
-        datas: ChartData[];
-        events?: EventMarker[];
-        lineMode?: LineType;
-      }
-    }>
+    inputMap: Map<string, TickerData>
   ): Map<string, { 
     color?: string;
     lineMode?: LineType;
     data: { 
-      [key: string]: {
-        datas: ChartData[];
-        events?: EventMarker[];
-        lineMode?: LineType;
-      }
+      [key: string]: ChartKeyData;
     }
   }> {
     const normalizedMap = new Map<string, { 
       color?: string;
       lineMode?: LineType;
       data: { 
-        [key: string]: {
-          datas: ChartData[];
-          events?: EventMarker[];
-          lineMode?: LineType;
-        }
+        [key: string]: ChartKeyData;
       }
     }>();
     
     inputMap.forEach((value, symbol) => {
-      // data가 단일 객체인지 chartKey별 객체인지 확인
+      // 타입 가드를 사용하여 단일 객체인지 chartKey별 객체인지 확인
       const data = value.data;
       
-      // 타입 가드: datas 속성이 있으면 단일 객체 형식
-      if ('datas' in data && Array.isArray(data.datas)) {
-        // 단일 객체 형식: { datas: ChartData[], events?: EventMarker[], lineMode?: LineType } -> { 'default': {...} }로 변환
-        const singleData = data as { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType };
+      if (isChartKeyData(data)) {
+        // 단일 객체 형식: ChartKeyData -> { 'default': {...} }로 변환
         normalizedMap.set(symbol, {
           color: value.color,
           lineMode: value.lineMode,
           data: { 
             'default': {
-              datas: singleData.datas,
-              events: singleData.events,
-              lineMode: singleData.lineMode
+              datas: data.datas,
+              events: data.events,
+              lineMode: data.lineMode
             }
           }
         });
@@ -485,7 +443,7 @@ export class OverlayStockChart {
         normalizedMap.set(symbol, {
           color: value.color,
           lineMode: value.lineMode,
-          data: data as { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } }
+          data: data
         });
       }
     });
@@ -516,21 +474,7 @@ export class OverlayStockChart {
     this.resizeObserver.observe(this.canvas);
   }
 
-  setData(dataMap: Map<string, { 
-    color?: string;
-    lineMode?: LineType;
-    data: { 
-      [key: string]: {
-        datas: ChartData[];
-        events?: EventMarker[];
-        lineMode?: LineType;
-      }
-    } | {
-      datas: ChartData[];
-      events?: EventMarker[];
-      lineMode?: LineType;
-    }
-  }>, commonEvents: CommonEvents = {}) {
+  setData(dataMap: Map<string, TickerData>, commonEvents: CommonEvents = {}) {
     this.dataMap = this.normalizeDataMap(dataMap);
     this.commonEvents = this.normalizeCommonEvents(commonEvents);
     

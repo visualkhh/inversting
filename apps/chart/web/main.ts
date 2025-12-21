@@ -1,4 +1,4 @@
-import {OverlayStockChart, type EventMarker, type CommonEvents, type XPointEvent, type EventBase, LineType} from './OverlayStockChart';
+import {OverlayStockChart, type EventMarker, type CommonEvents, type XPointEvent, type EventBase, LineType, type TickerData, type ChartKeyData, isChartKeyData} from './OverlayStockChart';
 
 // 새로운 ChartData 타입 (OverlayStockChart에서 사용)
 type ChartData = {
@@ -53,8 +53,8 @@ type OldChartData = {
 };
 
 // 기존 데이터를 새 형식으로 변환
-function convertToNewFormat(oldData: OldChartData[]): { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } {
-  const result: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } = {
+function convertToNewFormat(oldData: OldChartData[]): { [key: string]: ChartKeyData } {
+  const result: { [key: string]: ChartKeyData } = {
     price: { datas: [] },
     volume: { datas: [] },
     obv: { datas: [] }
@@ -101,18 +101,23 @@ function convertToNewFormat(oldData: OldChartData[]): { [key: string]: { datas: 
 }
 
 // 일자별 그룹화 함수
-function groupDataByDay(dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } }>): Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } }> {
-  const groupedMap = new Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } }>();
+function groupDataByDay(dataMap: Map<string, TickerData>): Map<string, TickerData> {
+  const groupedMap = new Map<string, TickerData>();
   
   dataMap.forEach((value, symbol) => {
-    const groupedData: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } = {};
+    const groupedData: { [key: string]: ChartKeyData } = {};
+    
+    // 타입 가드를 사용하여 단일 ChartKeyData인지 확인
+    const dataObj: { [key: string]: ChartKeyData } = isChartKeyData(value.data)
+      ? { default: value.data } 
+      : value.data;
     
     // 각 데이터 타입별로 일자별 그룹화
-    Object.keys(value.data).forEach(dataType => {
+    Object.keys(dataObj).forEach(dataType => {
       const dailyMap = new Map<number, ChartData>();
-      const chartDataObj = value.data[dataType];
+      const chartDataObj: ChartKeyData = dataObj[dataType];
       
-      chartDataObj.datas.forEach(d => {
+      chartDataObj.datas.forEach((d: ChartData) => {
         const date = new Date(d.x);
         const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0);
         const dayKey = dayStart.getTime();
@@ -157,13 +162,13 @@ function groupDataByDay(dataMap: Map<string, { color?: string; data: { [key: str
   return groupedMap;
 }
 
-function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>; commonEvents: { x?: (XPointEvent & EventBase)[]; chart?: { [key: string]: EventMarker[] } | EventMarker[] } } {
+function makeSampleData(): { dataMap: Map<string, TickerData>; commonEvents: { x?: (XPointEvent & EventBase)[]; chart?: { [key: string]: EventMarker[] } | EventMarker[] } } {
   const symbols = ['AVGO', 'MU', '005930.KS', '000660.KS'];
   const start = new Date('2025-09-01T00:00:00Z').getTime();
   const day = 24 * 60 * 60 * 1000;
   const points = 60;
 
-  const dataMap = new Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>();
+  const dataMap = new Map<string, TickerData>();
   symbols.forEach((sym, idx) => {
     let price = 100 + idx * 10;
     const priceData: ChartData[] = [];
@@ -228,7 +233,7 @@ function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key
   return { dataMap, commonEvents };
 }
 
-async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>; commonEvents: { x?: (XPointEvent & EventBase)[]; chart?: { [key: string]: EventMarker[] } | EventMarker[] } }> {
+async function loadData(): Promise<{ dataMap: Map<string, TickerData>; commonEvents: { x?: (XPointEvent & EventBase)[]; chart?: { [key: string]: EventMarker[] } | EventMarker[] } }> {
   try {
     // 1. 티커 목록 로드
     const tickersResp = await fetch('data/tickers.json');
@@ -242,7 +247,7 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
     setStatus(`Loading ${tickers.length} tickers...`);
     
     // 2. 각 티커별 데이터 및 이벤트 로드
-    const map = new Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>();
+    const map = new Map<string, TickerData>();
     
     const loadPromises = tickers.map(async (ticker) => {
       try {
@@ -312,8 +317,13 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
     // 3. 데이터에서 실제 존재하는 차트 키 추출
     const chartKeysSet = new Set<string>();
     map.forEach((value) => {
-      Object.keys(value.data).forEach(key => {
-        if (value.data[key].datas.length > 0) {
+      // 타입 가드를 사용하여 단일 ChartKeyData인지 확인
+      const dataObj: { [key: string]: ChartKeyData } = isChartKeyData(value.data)
+        ? { default: value.data } 
+        : value.data;
+      
+      Object.keys(dataObj).forEach(key => {
+        if (dataObj[key].datas.length > 0) {
           chartKeysSet.add(key);
         }
       });
@@ -391,8 +401,8 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
   }
 }
 
-let currentData: { dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>; commonEvents: { x?: (XPointEvent & EventBase)[]; chart?: { [key: string]: EventMarker[] } | EventMarker[] } } | null = null;
-let originalDataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } }> | null = null; // 원본 데이터 저장
+let currentData: { dataMap: Map<string, TickerData>; commonEvents: { x?: (XPointEvent & EventBase)[]; chart?: { [key: string]: EventMarker[] } | EventMarker[] } } | null = null;
+let originalDataMap: Map<string, TickerData> | null = null; // 원본 데이터 저장
 let overlayChart: OverlayStockChart | null = null;
 let showEvents = false;
 let showCandles = false;
