@@ -336,7 +336,6 @@ export class OverlayStockChart {
     initialState: RenderState,
     config?: ChartConfig
   ) {
-    console.log('data!!', dataMap, commonEvents)
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
     this.width = 0;
@@ -1236,7 +1235,8 @@ export class OverlayStockChart {
     showEvents: boolean,
     chartAreas: Array<DrawArea & { key: string }>,
     displayMinTime?: number,
-    displayMaxTime?: number
+    displayMaxTime?: number,
+    minMaxByChartKey?: Map<string, Map<string, { min: number; max: number }>>
   ) {
     if (!showEvents || sortedTimes.length === 0) return;
 
@@ -1292,7 +1292,12 @@ export class OverlayStockChart {
       for (const chartKey of this.state.visibleChartKeys) {
         const chartDataObj = value.data[chartKey];
         if (chartDataObj && chartDataObj.events && chartDataObj.events.length > 0) {
-          allEvents.push(...chartDataObj.events.map(e => ({ ...e, symbol, chartKey })));
+          // symbol을 명시적으로 덮어쓰기 (이벤트에 이미 symbol이 있어도 티커의 symbol로 설정)
+          allEvents.push(...chartDataObj.events.map(e => {
+            const eventWithSymbol = { ...e, chartKey };
+            (eventWithSymbol as any).symbol = symbol; // 명시적으로 symbol 설정
+            return eventWithSymbol;
+          }));
         }
       }
     });
@@ -1365,12 +1370,25 @@ export class OverlayStockChart {
           const area = chartAreas.find(a => a.key === chartKey);
           
           if (area) {
-            // 이벤트에 심볼이 지정된 경우 해당 심볼의 데이터만 사용
-            // 심볼이 없으면 모든 티커의 데이터 범위를 합쳐서 사용
+            // minMaxByChartKey는 drawChartKey에서 계산된 값으로, normalize 모드에 따라 이미 올바른 값을 가짐
             let globalMin = Infinity, globalMax = -Infinity;
+            let usedChartKeyRange = false;
             
-            if (event.symbol) {
-              // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
+            // 먼저 minMaxByChartKey에서 찾기 (normalize 모드와 상관없이)
+            if (minMaxByChartKey && event.symbol) {
+              const chartMinMax = minMaxByChartKey.get(chartKey);
+              if (chartMinMax) {
+                const symbolMinMax = chartMinMax.get(event.symbol);
+                if (symbolMinMax) {
+                  globalMin = symbolMinMax.min;
+                  globalMax = symbolMinMax.max;
+                  usedChartKeyRange = true;
+                }
+              }
+            }
+            
+            // minMaxByChartKey에서 못 찾은 경우 fallback
+            if (!usedChartKeyRange && event.symbol) {
               const symbolData = this.dataMap.get(event.symbol);
               if (symbolData) {
                 const chartDataObj = symbolData.data[chartKey];
@@ -1379,11 +1397,14 @@ export class OverlayStockChart {
                   if (values.length > 0) {
                     globalMin = Math.min(...values);
                     globalMax = Math.max(...values);
+                    usedChartKeyRange = true;
                   }
                 }
               }
-            } else {
-              // 공통 이벤트: 모든 티커의 데이터 범위를 합쳐서 사용
+            }
+            
+            // symbol이 없거나 데이터를 못 찾은 경우: 전체 범위 사용
+            if (!usedChartKeyRange) {
               this.dataMap.forEach((value) => {
                 const chartDataObj = value.data[chartKey];
                 if (chartDataObj) {
@@ -1395,8 +1416,6 @@ export class OverlayStockChart {
                 }
               });
             }
-            
-            console.log(`[XYRange] Event "${event.label}": event.symbol=${event.symbol}, range=${globalMin}-${globalMax}`);
             
             if (globalMin !== Infinity && globalMax !== -Infinity) {
               // 정규화 모드에서는 Y 값을 0-100% 범위로 변환
@@ -1557,12 +1576,25 @@ export class OverlayStockChart {
         const area = chartAreas.find(a => a.key === chartKey);
         
         if (area) {
-          // 이벤트에 심볼이 지정된 경우 해당 심볼의 데이터만 사용
-          // 심볼이 없으면 모든 티커의 데이터 범위를 합쳐서 사용
+          // minMaxByChartKey는 drawChartKey에서 계산된 값으로, normalize 모드에 따라 이미 올바른 값을 가짐
           let globalMin = Infinity, globalMax = -Infinity;
+          let usedChartKeyRange = false;
           
-          if (event.symbol) {
-            // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
+          // 먼저 minMaxByChartKey에서 찾기 (normalize 모드와 상관없이)
+          if (minMaxByChartKey && event.symbol) {
+            const chartMinMax = minMaxByChartKey.get(chartKey);
+            if (chartMinMax) {
+              const symbolMinMax = chartMinMax.get(event.symbol);
+              if (symbolMinMax) {
+                globalMin = symbolMinMax.min;
+                globalMax = symbolMinMax.max;
+                usedChartKeyRange = true;
+              }
+            }
+          }
+          
+          // minMaxByChartKey에서 못 찾은 경우 fallback
+          if (!usedChartKeyRange && event.symbol) {
             const symbolData = this.dataMap.get(event.symbol);
             if (symbolData) {
               const chartDataObj = symbolData.data[chartKey];
@@ -1571,11 +1603,14 @@ export class OverlayStockChart {
                 if (values.length > 0) {
                   globalMin = Math.min(...values);
                   globalMax = Math.max(...values);
+                  usedChartKeyRange = true;
                 }
               }
             }
-          } else {
-            // 공통 이벤트: 모든 티커의 데이터 범위를 합쳐서 사용
+          }
+          
+          // symbol이 없거나 데이터를 못 찾은 경우: 전체 범위 사용
+          if (!usedChartKeyRange) {
             this.dataMap.forEach((value) => {
               const chartDataObj = value.data[chartKey];
               if (chartDataObj) {
@@ -1587,8 +1622,6 @@ export class OverlayStockChart {
               }
             });
           }
-          
-          console.log(`[YRange] Event "${event.label}": event.symbol=${event.symbol}, range=${globalMin}-${globalMax}`);
           
           if (globalMin !== Infinity && globalMax !== -Infinity) {
             // 정규화 모드에서는 Y 값을 0-100% 범위로 변환
@@ -1718,12 +1751,25 @@ export class OverlayStockChart {
       if (!area) return;
       
       // 차트 데이터 범위 계산
-      // 이벤트에 심볼이 지정된 경우 해당 심볼의 데이터만 사용
-      // 심볼이 없으면 모든 티커의 데이터 범위를 합쳐서 사용
+      // minMaxByChartKey는 drawChartKey에서 계산된 값으로, normalize 모드에 따라 이미 올바른 값을 가짐
       let globalMin = Infinity, globalMax = -Infinity;
+      let usedChartKeyRange = false;
       
-      if (event.symbol) {
-        // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
+      // 먼저 minMaxByChartKey에서 찾기 (normalize 모드와 상관없이)
+      if (minMaxByChartKey && event.symbol) {
+        const chartMinMax = minMaxByChartKey.get(chartKey);
+        if (chartMinMax) {
+          const symbolMinMax = chartMinMax.get(event.symbol);
+          if (symbolMinMax) {
+            globalMin = symbolMinMax.min;
+            globalMax = symbolMinMax.max;
+            usedChartKeyRange = true;
+          }
+        }
+      }
+      
+      // minMaxByChartKey에서 못 찾은 경우 fallback
+      if (!usedChartKeyRange && event.symbol) {
         const symbolData = this.dataMap.get(event.symbol);
         if (symbolData) {
           const chartDataObj = symbolData.data[chartKey];
@@ -1732,11 +1778,14 @@ export class OverlayStockChart {
             if (values.length > 0) {
               globalMin = Math.min(...values);
               globalMax = Math.max(...values);
+              usedChartKeyRange = true;
             }
           }
         }
-      } else {
-        // 공통 이벤트: 모든 티커의 데이터 범위를 합쳐서 사용
+      }
+      
+      // symbol이 없거나 데이터를 못 찾은 경우: 전체 범위 사용
+      if (!usedChartKeyRange) {
         this.dataMap.forEach((value) => {
           const chartDataObj = value.data[chartKey];
           if (chartDataObj) {
@@ -2072,9 +2121,6 @@ export class OverlayStockChart {
       const eventChartKey = event.chartKey;
       const isCommonX = (event as any).isCommonX; // 공통 X 이벤트 여부
 
-      // 디버그 로그
-      console.log(`Event: "${event.label}", xTime: ${xTime}, chartKey: ${eventChartKey}, isCommonX: ${isCommonX}`);
-
       // X만 있음 (세로 라인)
       if (xTime >= minTime && xTime <= maxTime) {
           // 공통 X 이벤트인 경우: 모든 차트에 세로선, 라벨은 첫 번째 차트에만
@@ -2257,21 +2303,32 @@ export class OverlayStockChart {
       const yValue = event.y;
       const eventChartKey = event.chartKey;
 
-      console.log(`Event: "${event.label}", yValue: ${yValue}, chartKey: ${eventChartKey}`);
-
       // Y만 있음 (가로 라인)
       if (yValue !== undefined) {
         const chartKey = event.chartKey || this.state.visibleChartKeys[0];
-        console.log(`Y-only event: "${event.label}", chartKey: ${chartKey}, visibleChartKeys:`, this.state.visibleChartKeys);
         const area = chartAreas.find(a => a.key === chartKey);
-        console.log(`Area found:`, area);
         
         if (area) {
           // Y 값을 화면 좌표로 변환
+          // minMaxByChartKey는 drawChartKey에서 계산된 값으로, normalize 모드에 따라 이미 올바른 값을 가짐
           let globalMin = Infinity, globalMax = -Infinity;
+          let usedChartKeyRange = false;
           
-          if (event.symbol) {
-            // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
+          // 먼저 minMaxByChartKey에서 찾기 (normalize 모드와 상관없이)
+          if (minMaxByChartKey && event.symbol) {
+            const chartMinMax = minMaxByChartKey.get(chartKey);
+            if (chartMinMax) {
+              const symbolMinMax = chartMinMax.get(event.symbol);
+              if (symbolMinMax) {
+                globalMin = symbolMinMax.min;
+                globalMax = symbolMinMax.max;
+                usedChartKeyRange = true;
+              }
+            }
+          }
+          
+          // minMaxByChartKey에서 못 찾은 경우 fallback
+          if (!usedChartKeyRange && event.symbol) {
             const symbolData = this.dataMap.get(event.symbol);
             if (symbolData) {
               const chartDataObj = symbolData.data[chartKey];
@@ -2280,11 +2337,14 @@ export class OverlayStockChart {
                 if (values.length > 0) {
                   globalMin = Math.min(...values);
                   globalMax = Math.max(...values);
+                  usedChartKeyRange = true;
                 }
               }
             }
-          } else {
-            // 공통 이벤트: 모든 티커의 데이터 범위를 합쳐서 사용
+          }
+          
+          // symbol이 없거나 데이터를 못 찾은 경우: 전체 범위 사용
+          if (!usedChartKeyRange) {
             this.dataMap.forEach((value) => {
               const chartDataObj = value.data[chartKey];
               if (chartDataObj) {
@@ -2298,8 +2358,6 @@ export class OverlayStockChart {
           }
           
           if (globalMin !== Infinity && globalMax !== -Infinity) {
-            console.log(`Y-only event range: min=${globalMin}, max=${globalMax}, yValue=${yValue}`);
-            
             // 정규화 모드에서는 Y 값을 0-100% 범위로 변환
             let normalizedYValue = yValue;
             if (this.state.normalize) {
@@ -2312,7 +2370,6 @@ export class OverlayStockChart {
             
             // Y 값이 범위를 벗어나도 표시 (가로선은 항상 보이는 것이 유용)
             const y = this.getY(normalizedYValue, globalMin, globalMax, area.y, area.height);
-            console.log(`Y-only event drawing at y=${y}`);
             
             // 스타일 적용
             const strokeStyle = this.config.eventYStrokeStyle
@@ -2397,25 +2454,35 @@ export class OverlayStockChart {
       const yValue = event.y;
       const eventChartKey = event.chartKey;
 
-      console.log(`Event: "${event.label}", xTime: ${xTime}, yValue: ${yValue}, chartKey: ${eventChartKey}`);
-
       // X와 Y 모두 있음 (포인트 마커)
       if (xTime !== undefined && yValue !== undefined) {
-        console.log(`X+Y event: "${event.label}", xTime in range: ${xTime >= minTime && xTime <= maxTime} (${minTime} - ${maxTime})`);
         if (xTime >= minTime && xTime <= maxTime) {
           const chartKey = event.chartKey || this.state.visibleChartKeys[0];
-          console.log(`X+Y event chartKey: ${chartKey}, visibleChartKeys:`, this.state.visibleChartKeys);
           const area = chartAreas.find(a => a.key === chartKey);
-          console.log(`X+Y event area found:`, area);
           
           if (area) {
             // Y 값을 화면 좌표로 변환
-            // 이벤트에 심볼이 지정된 경우 해당 심볼의 데이터만 사용
-            // 심볼이 없으면 모든 visible/enabled 티커의 데이터 범위를 합쳐서 사용
+            // minMaxByChartKey는 drawChartKey에서 계산된 값으로, normalize 모드에 따라 이미 올바른 값을 가짐
+            // - normalize OFF: 모든 티커의 global min/max
+            // - normalize ON: 각 티커의 개별 min/max
             let globalMin = Infinity, globalMax = -Infinity;
+            let usedChartKeyRange = false;
             
-            if (event.symbol) {
-              // 특정 심볼의 이벤트: 해당 심볼의 데이터만 사용
+            // 먼저 minMaxByChartKey에서 찾기 (normalize 모드와 상관없이)
+            if (minMaxByChartKey && event.symbol) {
+              const chartMinMax = minMaxByChartKey.get(chartKey);
+              if (chartMinMax) {
+                const symbolMinMax = chartMinMax.get(event.symbol);
+                if (symbolMinMax) {
+                  globalMin = symbolMinMax.min;
+                  globalMax = symbolMinMax.max;
+                  usedChartKeyRange = true;
+                }
+              }
+            }
+            
+            // minMaxByChartKey에서 못 찾은 경우 fallback
+            if (!usedChartKeyRange && event.symbol) {
               const symbolData = this.dataMap.get(event.symbol);
               if (symbolData) {
                 const chartDataObj = symbolData.data[chartKey];
@@ -2424,11 +2491,16 @@ export class OverlayStockChart {
                   if (values.length > 0) {
                     globalMin = Math.min(...values);
                     globalMax = Math.max(...values);
+                    usedChartKeyRange = true;
                   }
                 }
               }
-            } else {
-              // 공통 이벤트: 모든 티커의 데이터 범위를 합쳐서 사용
+            }
+            
+            // symbol이 없거나 데이터를 못 찾은 경우: 전체 범위 사용
+            if (!usedChartKeyRange) {
+              globalMin = Infinity;
+              globalMax = -Infinity;
               this.dataMap.forEach((value) => {
                 const chartDataObj = value.data[chartKey];
                 if (chartDataObj) {
@@ -2441,27 +2513,12 @@ export class OverlayStockChart {
               });
             }
             
-            console.log(`[XYPoint] Event "${event.label}": event.symbol=${event.symbol}, range=${globalMin}-${globalMax}, yValue=${yValue}`);
-            
             if (globalMin !== Infinity && globalMax !== -Infinity) {
-              console.log(`X+Y event range: min=${globalMin}, max=${globalMax}, yValue=${yValue}`);
-              
-              // 정규화 모드에서는 Y 값을 0-100% 범위로 변환
-              let normalizedYValue = yValue;
-              if (this.state.normalize) {
-                // yValue를 globalMin~globalMax 범위에서 0~100 범위로 변환
-                normalizedYValue = ((yValue - globalMin) / (globalMax - globalMin)) * 100;
-                console.log(`[NORMALIZE] XY Event "${event.label}" symbol=${event.symbol}: yValue=${yValue} -> ${normalizedYValue}% (range: ${globalMin}-${globalMax})`);
-                // 변환된 값을 다시 0~100 범위의 min/max로 사용
-                globalMin = 0;
-                globalMax = 100;
-              }
-              
               // Y 값이 범위 내에 있는지 확인
-              if (normalizedYValue >= globalMin && normalizedYValue <= globalMax) {
+              if (yValue >= globalMin && yValue <= globalMax) {
                 const x = this.getX(xTime, minTime, maxTime);
-                const y = this.getY(normalizedYValue, globalMin, globalMax, area.y, area.height);
-                console.log(`X+Y event drawing at x=${x}, y=${y}`);
+                // minMaxByChartKey의 min/max를 그대로 사용 (라인 그래프와 동일한 스케일)
+                const y = this.getY(yValue, globalMin, globalMax, area.y, area.height);
                 
                 // 이벤트 비교: label과 x, y 값으로 비교 (객체 참조가 다를 수 있음)
                 const isHovered = this.hoveredEventMarker !== null && 
@@ -4301,6 +4358,8 @@ export class OverlayStockChart {
     
     // 각 차트 그리기 (DrawArea 전달)
     let firstChartResult: any = null;
+    const allMinMaxBySymbol = new Map<string, Map<string, { min: number; max: number }>>();
+    
     chartAreas.forEach((area, index) => {
       const result = this.drawChartKey(
         area.key,
@@ -4309,6 +4368,11 @@ export class OverlayStockChart {
         this.sortedTimes,
         chartOptions
       );
+      
+      // 각 chartKey별 minMaxBySymbol 저장
+      if (result && result.minMaxBySymbol) {
+        allMinMaxBySymbol.set(area.key, result.minMaxBySymbol);
+      }
       
       // 첫 번째 차트의 결과를 legend에 사용
       if (index === 0 && result) {
@@ -4365,7 +4429,7 @@ export class OverlayStockChart {
     }
 
     // 이벤트 마커 (포인트 위에 그려지도록)
-    this.drawEventMarkers(this.sortedTimes, chartBottom, this.state.showEvents, chartAreas, displayMinTime, displayMaxTime);
+    this.drawEventMarkers(this.sortedTimes, chartBottom, this.state.showEvents, chartAreas, displayMinTime, displayMaxTime, allMinMaxBySymbol);
 
     // 캔버스 전체 영역
     const canvasArea: DrawArea = {
