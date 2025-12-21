@@ -1,4 +1,4 @@
-import { OverlayStockChart, type EventMarker, type CommonEvents, type XPointEvent, type EventBase } from './OverlayStockChart';
+import {OverlayStockChart, type EventMarker, type CommonEvents, type XPointEvent, type EventBase, LineType} from './OverlayStockChart';
 
 // 새로운 ChartData 타입 (OverlayStockChart에서 사용)
 type ChartData = {
@@ -53,8 +53,8 @@ type OldChartData = {
 };
 
 // 기존 데이터를 새 형식으로 변환
-function convertToNewFormat(oldData: OldChartData[]): { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } {
-  const result: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } = {
+function convertToNewFormat(oldData: OldChartData[]): { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } {
+  const result: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } = {
     price: { datas: [] },
     volume: { datas: [] },
     obv: { datas: [] }
@@ -100,6 +100,63 @@ function convertToNewFormat(oldData: OldChartData[]): { [key: string]: { datas: 
   return result;
 }
 
+// 일자별 그룹화 함수
+function groupDataByDay(dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } }>): Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } }> {
+  const groupedMap = new Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } }>();
+  
+  dataMap.forEach((value, symbol) => {
+    const groupedData: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } = {};
+    
+    // 각 데이터 타입별로 일자별 그룹화
+    Object.keys(value.data).forEach(dataType => {
+      const dailyMap = new Map<number, ChartData>();
+      const chartDataObj = value.data[dataType];
+      
+      chartDataObj.datas.forEach(d => {
+        const date = new Date(d.x);
+        const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0);
+        const dayKey = dayStart.getTime();
+        
+        if (!dailyMap.has(dayKey)) {
+          dailyMap.set(dayKey, {
+            x: dayKey,
+            yOpen: d.yOpen,
+            yHigh: d.yHigh,
+            yLow: d.yLow,
+            y: d.y
+          });
+        } else {
+          const existing = dailyMap.get(dayKey)!;
+          if (d.yHigh !== undefined && existing.yHigh !== undefined && d.yHigh !== null && existing.yHigh !== null) {
+            existing.yHigh = Math.max(existing.yHigh, d.yHigh);
+          }
+          if (d.yLow !== undefined && existing.yLow !== undefined && d.yLow !== null && existing.yLow !== null) {
+            existing.yLow = Math.min(existing.yLow, d.yLow);
+          }
+          existing.y = d.y; // 마지막 값 사용
+          // volume 같은 누적 데이터는 합산
+          if (dataType === 'volume') {
+            existing.y += d.y;
+          }
+        }
+      });
+      
+      groupedData[dataType] = { 
+        datas: Array.from(dailyMap.values()).sort((a, b) => a.x - b.x),
+        events: chartDataObj.events,
+        lineMode: chartDataObj.lineMode
+      };
+    });
+    
+    groupedMap.set(symbol, { 
+      color: value.color, 
+      data: groupedData 
+    });
+  });
+  
+  return groupedMap;
+}
+
 function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>; commonEvents: { x?: (XPointEvent & EventBase)[]; chart?: { [key: string]: EventMarker[] } | EventMarker[] } } {
   const symbols = ['AVGO', 'MU', '005930.KS', '000660.KS'];
   const start = new Date('2025-09-01T00:00:00Z').getTime();
@@ -141,6 +198,7 @@ function makeSampleData(): { dataMap: Map<string, { color?: string; data: { [key
     }
     
     dataMap.set(sym, { 
+      // lineMode: 'line', // 티커별 lineMode 예시
       data: {
         price: { datas: priceData },
         volume: { datas: volumeData },
@@ -234,7 +292,16 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
           }
         }
         
-        map.set(ticker, { data: newData });
+        // chartKey별 lineMode 설정 예시 (obv는 step-to로 설정)
+        // if (newData.obv) {
+        //   newData.obv.lineMode = 'line';
+        //   console.log(`[${ticker}] Setting obv lineMode to 'line'`, newData.obv);
+        // }
+        
+        map.set(ticker, {
+          // lineMode: 'step-to', // 티커별 lineMode (선택사항)
+          data: newData
+        });
       } catch (err) {
         console.warn(`Error loading ${ticker}:`, err);
       }
@@ -325,12 +392,13 @@ async function loadData(): Promise<{ dataMap: Map<string, { color?: string; data
 }
 
 let currentData: { dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>; commonEvents: { x?: (XPointEvent & EventBase)[]; chart?: { [key: string]: EventMarker[] } | EventMarker[] } } | null = null;
+let originalDataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } }> | null = null; // 원본 데이터 저장
 let overlayChart: OverlayStockChart | null = null;
 let showEvents = false;
 let showCandles = false;
 let showGaps = true;
 let visibleChartKeys = ['price', 'volume', 'obv']; // 표시할 차트 키들
-let lineMode: 'line' | 'line-smooth' | 'line-smooth-open' | 'line-smooth-high' | 'line-smooth-low' | 'line-smooth-middle' | 'step-to' | 'step-from' = 'line';
+let lineMode: LineType = 'line-smooth';
 let showAverage = false;
 let hideValues = false;
 let dailyGroup = false;
@@ -346,6 +414,9 @@ let rangeMax = 100;
 (async function bootstrap() {
   currentData = await loadData();
   
+  // 원본 데이터 저장 (dailyGroup 토글용)
+  originalDataMap = new Map(currentData.dataMap);
+  
   // 모든 티커를 기본적으로 활성화 및 표시
   currentData.dataMap.forEach((_, symbol) => {
     enabledTickers.add(symbol);
@@ -360,78 +431,79 @@ let rangeMax = 100;
   // OverlayStockChart 초기화
   overlayChart = new OverlayStockChart(
     canvas, 
-    currentData.dataMap, 
-    currentData.commonEvents, 
+    currentData.dataMap,
     {
-      enabledTickers,
-      visibleTickers,
-      showEvents,
-      showCandles,
-      showGaps,
-      visibleChartKeys,
-      lineMode,
-      showAverage,
-      hideValues,
-      dailyGroup,
-      hideLines,
-      showGrid,
-      showPoints,
-      normalize,
-      rangeMin,
-      rangeMax
-    },
-    {
-      paddingLeft: 100,
-      paddingRight: 100,
-      // paddingTop: 100,
-      // paddingBottom: 100,
-      xFormat: (xValue: number, index, total) => {
-        if (index !==0 && index !== total-1 && index % Math.ceil(total / 2) !== 0) {
-          return '';
+      commonEvents: currentData.commonEvents,
+      initialState: {
+        enabledTickers,
+        visibleTickers,
+        showEvents,
+        showCandles,
+        showGaps,
+        visibleChartKeys,
+        lineMode,
+        showAverage,
+        hideValues,
+        hideLines,
+        showGrid,
+        showPoints,
+        normalize,
+        rangeMin,
+        rangeMax
+      },
+      config: {
+        paddingLeft: 100,
+        paddingRight: 100,
+        // paddingTop: 100,
+        // paddingBottom: 100,
+        xFormat: (xValue: number, index, total) => {
+          if (index !==0 && index !== total-1 && index % Math.ceil(total / 2) !== 0) {
+            return '';
+          }
+          const date = new Date(xValue);
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          const hours = String(date.getHours()).padStart(2, '0');
+          const minutes = String(date.getMinutes()).padStart(2, '0');
+          const seconds = String(date.getSeconds()).padStart(2, '0');
+          return `${year}-${month}-${day}`;
+        },
+        yFormat: (yValue: number, index, total) => {
+          if (index !==0 && index !== total-1 && index % Math.ceil(total / 2) !== 0) {
+            return '';
+          }
+            return yValue.toLocaleString(undefined, {maximumFractionDigits: 2});
+        //   if (overlayChart?.getState()?.normalize) {
+        //     return yValue.toLocaleString(undefined, {maximumFractionDigits: 2});
+        //   } else {
+        //     return {font:'6px Arial', value: yValue.toLocaleString(undefined, {maximumFractionDigits: 2})};
+        //   }
+        },
+        // tooltipLabelFormat: (chartKey: string) => {
+        //   return 'zzzzz'
+        // },
+        crosshairYFormat: (yValue: number, chartKey: string) => {
+          return yValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+        },
+        crosshairXFormat: (xValue: number) => {
+          const date = new Date(xValue);
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          const hours = String(date.getHours()).padStart(2, '0');
+          const minutes = String(date.getMinutes()).padStart(2, '0');
+          const seconds = String(date.getSeconds()).padStart(2, '0');
+          return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+        },
+        labelFormat: (chartKey: string) => {
+          const labels: { [key: string]: string } = {
+            price: 'Price',
+            volume: 'Volume',
+            obv: 'OBV'
+          };
+          return labels[chartKey] || chartKey;
         }
-        const date = new Date(xValue);
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const hours = String(date.getHours()).padStart(2, '0');
-        const minutes = String(date.getMinutes()).padStart(2, '0');
-        const seconds = String(date.getSeconds()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
-      },
-      yFormat: (yValue: number, index, total) => {
-        if (index !==0 && index !== total-1 && index % Math.ceil(total / 2) !== 0) {
-          return '';
-        }
-          return yValue.toLocaleString(undefined, {maximumFractionDigits: 2});
-      //   if (overlayChart?.getState()?.normalize) {
-      //     return yValue.toLocaleString(undefined, {maximumFractionDigits: 2});
-      //   } else {
-      //     return {font:'6px Arial', value: yValue.toLocaleString(undefined, {maximumFractionDigits: 2})};
-      //   }
-      },
-      // tooltipLabelFormat: (chartKey: string) => {
-      //   return 'zzzzz'
-      // },
-      crosshairYFormat: (yValue: number, chartKey: string) => {
-        return yValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
-      },
-      crosshairXFormat: (xValue: number) => {
-        const date = new Date(xValue);
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const hours = String(date.getHours()).padStart(2, '0');
-        const minutes = String(date.getMinutes()).padStart(2, '0');
-        const seconds = String(date.getSeconds()).padStart(2, '0');
-        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-      },
-      labelFormat: (chartKey: string) => {
-        const labels: { [key: string]: string } = {
-          price: 'Price',
-          volume: 'Volume',
-          obv: 'OBV'
-        };
-        return labels[chartKey] || chartKey;
       }
     }
   );
@@ -559,7 +631,7 @@ let rangeMax = 100;
       }
       radio.addEventListener('change', () => {
         if (radio.checked) {
-          lineMode = radio.value as 'line' | 'line-smooth' | 'line-smooth-open' | 'line-smooth-high' | 'line-smooth-low' | 'line-smooth-middle' | 'step-to' | 'step-from';
+          lineMode = radio.value as 'line' | 'line-smooth' | 'line-smooth-open' | 'line-smooth-high' | 'line-smooth-low' | 'line-smooth-middle' | 'step-to' | 'step-from' | 'step-center';
           overlayChart?.updateState({ lineMode });
         }
       });
@@ -586,7 +658,15 @@ let rangeMax = 100;
     toggleDailyGroupEl.checked = dailyGroup;
     toggleDailyGroupEl.addEventListener('change', () => {
       dailyGroup = toggleDailyGroupEl.checked;
-      overlayChart?.updateState({ dailyGroup });
+      
+      if (!originalDataMap) return;
+      
+      // dailyGroup이 활성화되면 데이터를 그룹화하고, 비활성화되면 원본 데이터 사용
+      const dataToUse = dailyGroup ? groupDataByDay(originalDataMap) : new Map(originalDataMap);
+      
+      // 차트에 새 데이터 설정
+      overlayChart?.setData(dataToUse, currentData?.commonEvents || {});
+      overlayChart?.render();
     });
   }
 

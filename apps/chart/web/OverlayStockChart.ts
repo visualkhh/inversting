@@ -6,6 +6,9 @@ type ChartData = {
   y: number;
 };
 
+// 라인 타입 정의
+export type LineType = 'line' | 'line-smooth' | 'line-smooth-open' | 'line-smooth-high' | 'line-smooth-low' | 'line-smooth-middle' | 'step-to' | 'step-from' | 'step-center';
+
 // 공통 이벤트 속성
 export interface EventBase {
   label: string;
@@ -129,9 +132,7 @@ interface ChartOptions {
   showEvents?: boolean;
   showCandles?: boolean;
   fillGaps?: boolean;
-  showVolume?: boolean;
-  showOBV?: boolean;
-  lineMode?: 'line' | 'line-smooth' | 'line-smooth-open' | 'line-smooth-high' | 'line-smooth-low' | 'line-smooth-middle' | 'step-to' | 'step-from';
+  lineMode?: LineType;
   showAverage?: boolean;
   hideValues?: boolean;
   hideLines?: boolean;
@@ -222,16 +223,22 @@ interface RenderState {
   showCandles: boolean;
   showGaps: boolean;
   visibleChartKeys: string[]; // 표시할 차트 키 목록 (순서대로)
-  lineMode: 'line' | 'line-smooth' | 'line-smooth-open' | 'line-smooth-high' | 'line-smooth-low' | 'line-smooth-middle' | 'step-to' | 'step-from';
+  lineMode: LineType; // 전체 기본 라인 모드
   showAverage: boolean;
   hideValues: boolean;
-  dailyGroup: boolean;
   hideLines: boolean;
   showGrid: boolean;
   showPoints: boolean;
   normalize: boolean;
   rangeMin: number;
   rangeMax: number;
+}
+
+// OverlayStockChart 옵션 인터페이스
+interface OverlayStockChartOptions {
+  commonEvents?: CommonEvents; // 공통 이벤트
+  initialState?: Partial<RenderState>; // 초기 상태 (부분 설정 가능)
+  config?: ChartConfig; // 차트 설정
 }
 
 // 공통 이벤트 타입 export
@@ -273,11 +280,13 @@ export class OverlayStockChart {
   ];
   private chartMargin = 0.1;
   private dataMap: Map<string, { 
-    color?: string; 
+    color?: string;
+    lineMode?: LineType; // 티커별 라인 모드 (우선순위 중간)
     data: { 
       [key: string]: {
         datas: ChartData[];
         events?: EventMarker[];
+        lineMode?: LineType; // chartKey별 라인 모드 (우선순위 최고)
       }
     }
   }>;
@@ -327,29 +336,56 @@ export class OverlayStockChart {
   constructor(
     canvas: HTMLCanvasElement,
     dataMap: Map<string, { 
-      color?: string; 
+      color?: string;
+      lineMode?: LineType; // 티커별 라인 모드
       data: { 
         [key: string]: {
           datas: ChartData[];
           events?: EventMarker[];
+          lineMode?: LineType; // chartKey별 라인 모드
         }
       } | {
         datas: ChartData[];
         events?: EventMarker[];
+        lineMode?: LineType; // 단일 데이터의 경우
       }
     }>,
-    commonEvents: CommonEvents = {},
-    initialState: RenderState,
-    config?: ChartConfig
+    options: OverlayStockChartOptions = {}
   ) {
+    const {
+      commonEvents = {},
+      initialState = {},
+      config = {}
+    } = options;
+    
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
     this.width = 0;
     this.height = 0;
     this.dataMap = this.normalizeDataMap(dataMap);
     this.commonEvents = this.normalizeCommonEvents(commonEvents);
-    this.state = initialState;
-    this.config = config || {};
+    
+    // initialState 기본값 설정
+    const defaultState: RenderState = {
+      enabledTickers: new Set<string>(),
+      visibleTickers: new Set<string>(),
+      showEvents: false,
+      showCandles: false,
+      showGaps: true,
+      visibleChartKeys: [],
+      lineMode: 'line',
+      showAverage: false,
+      hideValues: false,
+      hideLines: false,
+      showGrid: false,
+      showPoints: false,
+      normalize: false,
+      rangeMin: 0,
+      rangeMax: 100
+    };
+    
+    this.state = { ...defaultState, ...initialState };
+    this.config = config;
     
     // padding 설정
     this.paddingLeft = this.config.paddingLeft ?? 50;
@@ -388,32 +424,39 @@ export class OverlayStockChart {
   // main.ts에서 받은 데이터를 내부 형식으로 변환
   private normalizeDataMap(
     inputMap: Map<string, { 
-      color?: string; 
+      color?: string;
+      lineMode?: LineType;
       data: { 
         [key: string]: {
           datas: ChartData[];
           events?: EventMarker[];
+          lineMode?: LineType;
         }
       } | {
         datas: ChartData[];
         events?: EventMarker[];
+        lineMode?: LineType;
       }
     }>
   ): Map<string, { 
-    color?: string; 
+    color?: string;
+    lineMode?: LineType;
     data: { 
       [key: string]: {
         datas: ChartData[];
         events?: EventMarker[];
+        lineMode?: LineType;
       }
     }
   }> {
     const normalizedMap = new Map<string, { 
-      color?: string; 
+      color?: string;
+      lineMode?: LineType;
       data: { 
         [key: string]: {
           datas: ChartData[];
           events?: EventMarker[];
+          lineMode?: LineType;
         }
       }
     }>();
@@ -424,14 +467,16 @@ export class OverlayStockChart {
       
       // 타입 가드: datas 속성이 있으면 단일 객체 형식
       if ('datas' in data && Array.isArray(data.datas)) {
-        // 단일 객체 형식: { datas: ChartData[], events?: EventMarker[] } -> { 'default': {...} }로 변환
-        const singleData = data as { datas: ChartData[]; events?: EventMarker[] };
+        // 단일 객체 형식: { datas: ChartData[], events?: EventMarker[], lineMode?: LineType } -> { 'default': {...} }로 변환
+        const singleData = data as { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType };
         normalizedMap.set(symbol, {
           color: value.color,
+          lineMode: value.lineMode,
           data: { 
             'default': {
               datas: singleData.datas,
-              events: singleData.events
+              events: singleData.events,
+              lineMode: singleData.lineMode
             }
           }
         });
@@ -439,7 +484,8 @@ export class OverlayStockChart {
         // 이미 chartKey별 객체 형식
         normalizedMap.set(symbol, {
           color: value.color,
-          data: data as { [key: string]: { datas: ChartData[]; events?: EventMarker[] } }
+          lineMode: value.lineMode,
+          data: data as { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } }
         });
       }
     });
@@ -471,15 +517,18 @@ export class OverlayStockChart {
   }
 
   setData(dataMap: Map<string, { 
-    color?: string; 
+    color?: string;
+    lineMode?: LineType;
     data: { 
       [key: string]: {
         datas: ChartData[];
         events?: EventMarker[];
+        lineMode?: LineType;
       }
     } | {
       datas: ChartData[];
       events?: EventMarker[];
+      lineMode?: LineType;
     }
   }>, commonEvents: CommonEvents = {}) {
     this.dataMap = this.normalizeDataMap(dataMap);
@@ -717,6 +766,11 @@ export class OverlayStockChart {
       const color = this.getTickerColor(symbol);
       const minMax = minMaxBySymbol.get(symbol)!;
       const sortedPoints = points.sort((a, b) => a.time - b.time);
+      
+      // lineMode 우선순위: chartKey > ticker > RenderState
+      const tickerData = this.dataMap.get(symbol);
+      const chartKeyData = tickerData?.data[chartKey];
+      const effectiveLineMode = chartKeyData?.lineMode || tickerData?.lineMode || lineMode;
 
       // 캔들 (OHLC 값이 모두 있는 포인트만)
       if (showCandles) {
@@ -732,7 +786,7 @@ export class OverlayStockChart {
 
       // 라인
       if (!hideLines) {
-        this.drawLine(sortedPoints, minMax, color, minTime, maxTime, timeRange, sortedTimes.length, graphTop, graphHeight, fillGaps, lineMode, symbol, chartKey);
+        this.drawLine(sortedPoints, minMax, color, minTime, maxTime, timeRange, sortedTimes.length, graphTop, graphHeight, fillGaps, effectiveLineMode, symbol, chartKey);
       }
     });
 
@@ -916,7 +970,7 @@ export class OverlayStockChart {
     topY: number,
     height: number,
     fillGaps: boolean,
-    lineMode: 'line' | 'line-smooth' | 'line-smooth-open' | 'line-smooth-high' | 'line-smooth-low' | 'line-smooth-middle' | 'step-to' | 'step-from',
+    lineMode: LineType,
     symbol?: string,
     chartKey?: string
   ) {
@@ -983,6 +1037,12 @@ export class OverlayStockChart {
           // step-from: 수직선 -> 수평선
           this.ctx.lineTo(prevX, y); // 수직선
           this.ctx.lineTo(x, y);     // 수평선
+        } else if (lineMode === 'step-center') {
+          // step-center: 수평선 -> 중간에서 수직선 -> 수평선
+          const midX = (prevX + x) / 2;
+          this.ctx.lineTo(midX, prevY); // 수평선 (중간까지)
+          this.ctx.lineTo(midX, y);     // 수직선 (중간에서)
+          this.ctx.lineTo(x, y);        // 수평선 (끝까지)
         } else {
           // line: 직선
           this.ctx.lineTo(x, y);
@@ -1007,6 +1067,15 @@ export class OverlayStockChart {
           // step-from: 수직선 -> 수평선
           const prevX = this.getX(prevPoint.time, minTime, maxTime);
           this.ctx.lineTo(prevX, y); // 수직선
+          this.ctx.lineTo(x, y);     // 수평선
+        } else if (lineMode === 'step-center') {
+          // step-center: 수평선 -> 중간에서 수직선 -> 수평선
+          const prevX = this.getX(prevPoint.time, minTime, maxTime);
+          const prevY = this.getY(prevPoint.close, minMax.min, minMax.max, topY, height);
+          const midX = (prevX + x) / 2;
+          this.ctx.lineTo(midX, prevY); // 수평선 (중간까지)
+          this.ctx.lineTo(midX, y);     // 수직선 (중간에서)
+          this.ctx.lineTo(x, y);        // 수평선 (끝까지)
           this.ctx.lineTo(x, y);     // 수평선
         } else {
           // line: 직선
@@ -1192,25 +1261,6 @@ export class OverlayStockChart {
     });
     
     return newLegendItems;
-  }
-
-  drawChartDividers(volumeTopY: number, obvTopY: number, showVolume: boolean, showOBV: boolean) {
-    this.ctx.strokeStyle = '#000000';
-    this.ctx.lineWidth = 2;
-    
-    if (showVolume) {
-      this.ctx.beginPath();
-      this.ctx.moveTo(this.chartAreaLeft, volumeTopY);
-      this.ctx.lineTo(this.getChartRight(), volumeTopY);
-      this.ctx.stroke();
-    }
-    
-    if (showOBV) {
-      this.ctx.beginPath();
-      this.ctx.moveTo(this.chartAreaLeft, obvTopY);
-      this.ctx.lineTo(this.getChartRight(), obvTopY);
-      this.ctx.stroke();
-    }
   }
 
   private drawRangeEventLabel(event: EventMarker, x: number, y: number, color: string, align: 'center' | 'left' = 'center', baseline: CanvasTextBaseline = 'top') {
@@ -3364,10 +3414,9 @@ export class OverlayStockChart {
       } else if (this.config.yFormat) {
         const formatted = this.config.yFormat(point.value, 0, 1, point.chartType);
         valueStr = this.applyFormatResult(formatted);
-      } else if (point.chartType === 'Volume' || point.chartType === 'OBV') {
-        valueStr = point.value.toLocaleString();
       } else {
-        valueStr = point.value.toFixed(2);
+        // 기본 포맷: 소수점 2자리 또는 정수 (값이 크면 천단위 구분)
+        valueStr = point.value.toLocaleString(undefined, { maximumFractionDigits: 2 });
       }
       
       const labelFormatted = this.config.labelFormat
@@ -4207,58 +4256,6 @@ export class OverlayStockChart {
     }, { passive: true });
   }
 
-  private groupDataByDay(dataMap: Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>): Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }> {
-    const groupedMap = new Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>();
-    
-    dataMap.forEach((value, symbol) => {
-      const groupedData: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } = {};
-      
-      // 각 데이터 타입별로 일자별 그룹화
-      Object.keys(value.data).forEach(dataType => {
-        const dailyMap = new Map<number, ChartData>();
-        const chartDataObj = value.data[dataType];
-        
-        chartDataObj.datas.forEach(d => {
-          const date = new Date(d.x);
-          const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0);
-          const dayKey = dayStart.getTime();
-          
-          if (!dailyMap.has(dayKey)) {
-            dailyMap.set(dayKey, {
-              x: dayKey,
-              yOpen: d.yOpen,
-              yHigh: d.yHigh,
-              yLow: d.yLow,
-              y: d.y
-            });
-          } else {
-            const existing = dailyMap.get(dayKey)!;
-            if (d.yHigh !== undefined && existing.yHigh !== undefined && d.yHigh !== null && existing.yHigh !== null) {
-              existing.yHigh = Math.max(existing.yHigh, d.yHigh);
-            }
-            if (d.yLow !== undefined && existing.yLow !== undefined && d.yLow !== null && existing.yLow !== null) {
-              existing.yLow = Math.min(existing.yLow, d.yLow);
-            }
-            existing.y = d.y;
-            // volume의 경우 합산
-            if (dataType === 'volume') {
-              existing.y += d.y;
-            }
-          }
-        });
-        
-        groupedData[dataType] = { 
-          datas: Array.from(dailyMap.values()).sort((a, b) => a.x - b.x),
-          events: chartDataObj.events
-        };
-      });
-      
-      groupedMap.set(symbol, { color: value.color, data: groupedData });
-    });
-    
-    return groupedMap;
-  }
-
   render() {
     const dpr = window.devicePixelRatio || 1;
     const { width: cssW, height: cssH } = this.canvas.getBoundingClientRect();
@@ -4300,17 +4297,12 @@ export class OverlayStockChart {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     
     // 활성화된 티커만 필터링
-    let filteredDataMap = new Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>();
+    let filteredDataMap = new Map<string, { color?: string; lineMode?: LineType; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } }>();
     this.dataMap.forEach((value, symbol) => {
       if (this.state.enabledTickers.has(symbol)) {
         filteredDataMap.set(symbol, value);
       }
     });
-    
-    // 일자별 그룹 적용
-    if (this.state.dailyGroup) {
-      filteredDataMap = this.groupDataByDay(filteredDataMap);
-    }
     
     // 전체 시간 범위 계산
     let globalMinTime = Infinity;
@@ -4346,15 +4338,19 @@ export class OverlayStockChart {
     
     // 시간 기반으로 각 티커 필터링
     if (this.state.rangeMin > 0 || this.state.rangeMax < 100 || this.zoomStart > 0 || this.zoomEnd < 100) {
-      const timeFilteredMap = new Map<string, { color?: string; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } }>();
+      const timeFilteredMap = new Map<string, { color?: string; lineMode?: LineType; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } }>();
       filteredDataMap.forEach((value, symbol) => {
-        const filteredData: { [key: string]: { datas: ChartData[]; events?: EventMarker[] } } = {};
+        const filteredData: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } = {};
         
         Object.keys(value.data).forEach(dataType => {
           const chartDataObj = value.data[dataType];
           const data = chartDataObj.datas;
           if (data.length === 0) {
-            filteredData[dataType] = { datas: [], events: chartDataObj.events };
+            filteredData[dataType] = { 
+              datas: [], 
+              events: chartDataObj.events,
+              lineMode: chartDataObj.lineMode // lineMode 보존
+            };
             return;
           }
           
@@ -4371,16 +4367,28 @@ export class OverlayStockChart {
           }
           
           if (startIdx === -1 || endIdx === -1) {
-            filteredData[dataType] = { datas: [], events: chartDataObj.events };
+            filteredData[dataType] = { 
+              datas: [], 
+              events: chartDataObj.events,
+              lineMode: chartDataObj.lineMode // lineMode 보존
+            };
             return;
           }
           
           const actualStartIdx = Math.max(0, startIdx - 1);
           const actualEndIdx = Math.min(data.length - 1, endIdx + 1);
-          filteredData[dataType] = { datas: data.slice(actualStartIdx, actualEndIdx + 1), events: chartDataObj.events };
+          filteredData[dataType] = { 
+            datas: data.slice(actualStartIdx, actualEndIdx + 1), 
+            events: chartDataObj.events,
+            lineMode: chartDataObj.lineMode // lineMode 보존
+          };
         });
         
-        timeFilteredMap.set(symbol, { color: value.color, data: filteredData });
+        timeFilteredMap.set(symbol, { 
+          color: value.color, 
+          lineMode: value.lineMode, // 티커별 lineMode 보존
+          data: filteredData 
+        });
       });
       filteredDataMap = timeFilteredMap;
     }
