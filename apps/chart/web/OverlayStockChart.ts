@@ -203,6 +203,12 @@ interface ChartConfig {
   paddingTop?: number; // 위쪽 여백
   paddingBottom?: number; // 아래쪽 여백 (X축 레이블 영역)
   
+  // 축 범위 설정
+  xMin?: number | ((chartKey: string) => number); // X축 최소값 (timestamp)
+  xMax?: number | ((chartKey: string) => number); // X축 최대값 (timestamp)
+  yMin?: number | ((chartKey: string) => number); // Y축 최소값
+  yMax?: number | ((chartKey: string) => number); // Y축 최대값
+  
   // 콜백
   onLegendClick?: (symbol: string, isVisible: boolean) => void; // 범례 클릭 콜백
   onZoomButtonClick?: (type: 'zoomIn' | 'zoomOut' | 'reset', zoomStart: number, zoomEnd: number) => void; // 줌 버튼 클릭 콜백
@@ -596,8 +602,22 @@ export class OverlayStockChart {
       dataBySymbol.set(symbol, points);
     });
 
-    const minTime = displayMinTime ?? sortedTimes[0];
-    const maxTime = displayMaxTime ?? sortedTimes[sortedTimes.length - 1];
+    // X축 범위 설정 (config 우선, 없으면 displayMinTime/displayMaxTime, 없으면 전체 데이터)
+    let minTime: number;
+    let maxTime: number;
+    
+    if (this.config.xMin !== undefined) {
+      minTime = typeof this.config.xMin === 'function' ? this.config.xMin(chartKey) : this.config.xMin;
+    } else {
+      minTime = displayMinTime ?? sortedTimes[0];
+    }
+    
+    if (this.config.xMax !== undefined) {
+      maxTime = typeof this.config.xMax === 'function' ? this.config.xMax(chartKey) : this.config.xMax;
+    } else {
+      maxTime = displayMaxTime ?? sortedTimes[sortedTimes.length - 1];
+    }
+    
     const timeRange = maxTime - minTime || 1;
 
     const minMaxBySymbol = new Map<string, { min: number; max: number }>();
@@ -607,10 +627,20 @@ export class OverlayStockChart {
       dataBySymbol.forEach((points, symbol) => {
         const closes = points.map(p => p.close);
         if (closes.length > 0) {
-          minMaxBySymbol.set(symbol, {
-            min: Math.min(...closes),
-            max: Math.max(...closes)
-          });
+          let min = Math.min(...closes);
+          let max = Math.max(...closes);
+          
+          // config에서 yMin/yMax 설정이 있으면 적용
+          if (this.config.yMin !== undefined) {
+            const configMin = typeof this.config.yMin === 'function' ? this.config.yMin(chartKey) : this.config.yMin;
+            min = configMin;
+          }
+          if (this.config.yMax !== undefined) {
+            const configMax = typeof this.config.yMax === 'function' ? this.config.yMax(chartKey) : this.config.yMax;
+            max = configMax;
+          }
+          
+          minMaxBySymbol.set(symbol, { min, max });
         }
       });
     } else {
@@ -625,6 +655,16 @@ export class OverlayStockChart {
           globalMax = Math.max(globalMax, ...closes);
         }
       });
+      
+      // config에서 yMin/yMax 설정이 있으면 적용
+      if (this.config.yMin !== undefined) {
+        const configMin = typeof this.config.yMin === 'function' ? this.config.yMin(chartKey) : this.config.yMin;
+        globalMin = configMin;
+      }
+      if (this.config.yMax !== undefined) {
+        const configMax = typeof this.config.yMax === 'function' ? this.config.yMax(chartKey) : this.config.yMax;
+        globalMax = configMax;
+      }
       
       // 모든 티커에 동일한 min/max 적용
       dataBySymbol.forEach((_, symbol) => {
@@ -1087,7 +1127,7 @@ export class OverlayStockChart {
         
         if (i === 0) {
           this.ctx.moveTo(x, y);
-        } else if (smoothMode !== 'none' && i > 0) {
+        } else if (lineMode.startsWith('line-smooth') && i > 0) {
           const prevPoint = avgPoints[i - 1];
           const prevX = this.getX(prevPoint.time, minTime, maxTime);
           const prevY = prevPoint.avgY;
