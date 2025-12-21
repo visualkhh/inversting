@@ -3073,7 +3073,8 @@ export class OverlayStockChart {
     displayMinTime?: number,
     displayMaxTime?: number
   ) {
-    if (mouseX < this.padding || mouseX > this.width - this.padding) return;
+    // 마우스가 차트 영역 내에 있는지 확인 (X축)
+    if (mouseX < this.chartAreaLeft || mouseX > this.getChartRight()) return;
     
     // 마우스가 어느 차트 영역에 있는지 확인
     let isInChartArea = false;
@@ -3086,25 +3087,29 @@ export class OverlayStockChart {
     
     if (!isInChartArea) return;
     
+    const chartTop = chartAreas.length > 0 ? chartAreas[0].y : this.paddingTop;
     const chartBottom = chartAreas.length > 0 
       ? chartAreas[chartAreas.length - 1].y + chartAreas[chartAreas.length - 1].height
-      : this.height - this.padding;
+      : this.height - this.paddingBottom;
     
     this.ctx.strokeStyle = this.config.crosshairStrokeStyle || '#666666';
     this.ctx.lineWidth = this.config.crosshairLineWidth || 1;
     this.ctx.setLineDash(this.config.crosshairLineDash || [4, 4]);
+    
+    // 세로선: 차트 영역 내에서만 그리기
     this.ctx.beginPath();
-    this.ctx.moveTo(mouseX, this.padding);
+    this.ctx.moveTo(mouseX, chartTop);
     this.ctx.lineTo(mouseX, chartBottom);
     this.ctx.stroke();
 
+    // 가로선: 차트 영역 내에서만 그리기
     this.ctx.beginPath();
     this.ctx.moveTo(this.chartAreaLeft, mouseY);
     this.ctx.lineTo(this.getChartRight(), mouseY);
     this.ctx.stroke();
     this.ctx.setLineDash([]);
 
-    const timePercent = (mouseX - this.padding) / (this.width - this.padding * 2);
+    const timePercent = (mouseX - this.chartAreaLeft) / this.chartAreaWidth;
     
     if (sortedTimes.length > 0) {
       const minTime = displayMinTime ?? sortedTimes[0];
