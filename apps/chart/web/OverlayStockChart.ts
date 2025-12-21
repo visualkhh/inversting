@@ -348,6 +348,10 @@ export class OverlayStockChart {
   private lastTapX = 0;
   private lastTapY = 0;
   
+  // 평균선 캐시 (성능 최적화)
+  private averageLineCache: Map<string, { time: number; avgValue: number }[]> = new Map();
+  private averageLineCacheKey: string = '';
+  
   // 더블클릭 감지 (PC)
   private clickTimer: number | null = null;
   private clickDelay = 250; // 250ms 내에 더블클릭 감지
@@ -507,6 +511,9 @@ export class OverlayStockChart {
     this.originalDataMap = this.dataMap; // 원본 데이터 저장
     this.commonEvents = this.normalizeCommonEvents(commonEvents);
     
+    // 평균선 캐시 초기화
+    this.averageLineCache.clear();
+    
     // 티커별 색상 재초기화
     this.tickerColors.clear();
     let colorIndex = 0;
@@ -519,6 +526,11 @@ export class OverlayStockChart {
 
   updateState(partialState: Partial<RenderState>) {
     this.state = { ...this.state, ...partialState };
+    
+    // visibleTickers나 showAverage가 변경되면 캐시 초기화
+    if (partialState.visibleTickers || partialState.showAverage) {
+      this.averageLineCache.clear();
+    }
     this.render();
   }
 
@@ -967,8 +979,8 @@ export class OverlayStockChart {
       }
 
       // High-Low 라인
-      this.ctx.globalAlpha = 0.6; // 0.3
-      // this.ctx.globalAlpha = 0.3; // 0.3
+      // this.ctx.globalAlpha = 0.6; // 0.3
+      this.ctx.globalAlpha = 0.3; // 0.3
       this.ctx.strokeStyle = borderColor;
       this.ctx.lineWidth = 1;
       this.ctx.beginPath();
@@ -1164,7 +1176,10 @@ export class OverlayStockChart {
     chartKey: string
   ) {
     
-
+    // 캐시 키 생성 (visibleTickers, chartKey, averageConfig로 구분)
+    const visibleTickersKey = Array.from(this.state.visibleTickers).sort().join(',');
+    const cacheKey = `${chartKey}-${averageConfig.type}-${averageConfig.type === 'moving' ? averageConfig.xWidth : 'full'}-${averageConfig.label}-${visibleTickersKey}`;
+    
     // 평균선 계산을 위해 원본 데이터(this.originalDataMap) 사용 - 확대와 무관하게 전체 데이터 사용
     const fullDataBySymbol = new Map<string, { time: number; close: number }[]>();
     
@@ -1203,17 +1218,22 @@ export class OverlayStockChart {
     const allTimes = Array.from(allTimesSet).sort((a, b) => a - b);
     
     if (averageConfig.type === 'average') {
-      // 전체 평균선: 모든 티커의 평균을 하나의 선으로
-      const avgPoints: { time: number; avgValue: number }[] = [];
+      // 캐시 확인
+      let avgPoints: { time: number; avgValue: number }[] = [];
       
-      // 전체 시간에 대해 평균 계산 (실제 값으로)
-      allTimes.forEach(time => {
-        const closeValues: number[] = [];
+      if (this.averageLineCache.has(cacheKey)) {
+        avgPoints = this.averageLineCache.get(cacheKey)!;
+      } else {
+        // 전체 평균선: 모든 티커의 평균을 하나의 선으로
         
-        fullDataBySymbol.forEach((sortedPoints, symbol) => {
-          let closeValue: number | null = null;
-          const exactPoint = sortedPoints.find(p => p.time === time);
+        // 전체 시간에 대해 평균 계산 (실제 값으로)
+        allTimes.forEach(time => {
+          const closeValues: number[] = [];
           
+          fullDataBySymbol.forEach((sortedPoints, symbol) => {
+            let closeValue: number | null = null;
+            const exactPoint = sortedPoints.find(p => p.time === time);
+            
           if (exactPoint) {
             closeValue = exactPoint.close;
           } else {
@@ -1249,6 +1269,10 @@ export class OverlayStockChart {
           avgPoints.push({ time, avgValue });
         }
       });
+        
+        // 캐시에 저장
+        this.averageLineCache.set(cacheKey, avgPoints);
+      }
       
       // 평균값의 min/max 계산
       const avgValues = avgPoints.map(p => p.avgValue);
@@ -1298,13 +1322,43 @@ export class OverlayStockChart {
       this.drawSingleAverageLine(visibleAvgPoints, minTime, maxTime, topY, height, lineMode, averageConfig);
       
     } else if (averageConfig.type === 'moving') {
-      // 이동평균선: 전체 평균에 대한 이동평균 (하나의 선)
-      const xWidth = averageConfig.xWidth; // 시간 범위 (밀리초)
+      // 캐시 확인
+      let movingAvgPoints: { time: number; avgY: number }[] = [];
       
-      // 먼저 전체 평균 계산 (모든 시간에 대해)
-      const avgValues: { time: number; avgValue: number }[] = [];
-      
-      allTimes.forEach(time => {
+      if (this.averageLineCache.has(cacheKey)) {
+        // 캐시된 데이터를 avgValue 형태로 가져와서 Y 좌표로 변환
+        const cachedAvgValues = this.averageLineCache.get(cacheKey)!;
+        
+        // Y 좌표 계산 (정규화 고려)
+        cachedAvgValues.forEach(item => {
+          let yCoord: number;
+          if (this.state.normalize) {
+            // 정규화 모드: 전체 평균값의 min/max 계산
+            const allAvgValues = cachedAvgValues.map(v => v.avgValue);
+            const minAvg = Math.min(...allAvgValues);
+            const maxAvg = Math.max(...allAvgValues);
+            yCoord = this.getY(item.avgValue, minAvg, maxAvg, topY, height);
+          } else {
+            // 비정규화 모드: 전체 데이터의 min/max 사용
+            let globalMin = Infinity;
+            let globalMax = -Infinity;
+            minMaxBySymbol.forEach((minMax) => {
+              globalMin = Math.min(globalMin, minMax.min);
+              globalMax = Math.max(globalMax, minMax.max);
+            });
+            yCoord = this.getY(item.avgValue, globalMin, globalMax, topY, height);
+          }
+          
+          movingAvgPoints.push({ time: item.time, avgY: yCoord });
+        });
+      } else {
+        // 이동평균선: 전체 평균에 대한 이동평균 (하나의 선)
+        const xWidth = averageConfig.xWidth; // 시간 범위 (밀리초)
+        
+        // 먼저 전체 평균 계산 (모든 시간에 대해)
+        const avgValues: { time: number; avgValue: number }[] = [];
+        
+        allTimes.forEach(time => {
         const yValues: number[] = [];
         
         fullDataBySymbol.forEach((sortedPoints, symbol) => {
@@ -1351,7 +1405,7 @@ export class OverlayStockChart {
       });
       
       // 전체 평균값에 대해 이동평균 계산
-      const movingAvgPoints: { time: number; avgY: number }[] = [];
+      let movingAvgPointsTemp: { time: number; avgY: number }[] = [];
       const firstDataTime = avgValues.length > 0 ? avgValues[0].time : 0;
       
       avgValues.forEach((item, index) => {
@@ -1376,15 +1430,23 @@ export class OverlayStockChart {
         // 데이터가 있을 때만 계산
         if (rangeValues.length > 0) {
           const movingAvg = rangeValues.reduce((sum, v) => sum + v, 0) / rangeValues.length;
-          
-          // Y 좌표 계산 (정규화 고려)
+          movingAvgPointsTemp.push({ time, avgY: movingAvg }); // avgY에 일단 avgValue 저장
+        }
+      });
+        
+        // 캐시에 저장 (avgY를 avgValue로 변환)
+        const cacheData = movingAvgPointsTemp.map(p => ({ time: p.time, avgValue: p.avgY }));
+        this.averageLineCache.set(cacheKey, cacheData);
+        
+        // Y 좌표로 변환
+        movingAvgPoints = movingAvgPointsTemp.map(item => {
           let yCoord: number;
           if (this.state.normalize) {
             // 정규화 모드: 전체 평균값의 min/max 계산
             const allAvgValues = avgValues.map(v => v.avgValue);
             const minAvg = Math.min(...allAvgValues);
             const maxAvg = Math.max(...allAvgValues);
-            yCoord = this.getY(movingAvg, minAvg, maxAvg, topY, height);
+            yCoord = this.getY(item.avgY, minAvg, maxAvg, topY, height);
           } else {
             // 비정규화 모드: 전체 데이터의 min/max 사용
             let globalMin = Infinity;
@@ -1393,12 +1455,11 @@ export class OverlayStockChart {
               globalMin = Math.min(globalMin, minMax.min);
               globalMax = Math.max(globalMax, minMax.max);
             });
-            yCoord = this.getY(movingAvg, globalMin, globalMax, topY, height);
+            yCoord = this.getY(item.avgY, globalMin, globalMax, topY, height);
           }
-          
-          movingAvgPoints.push({ time, avgY: yCoord });
-        }
-      });
+          return { time: item.time, avgY: yCoord };
+        });
+      }
       
       // 화면에 보이는 영역 + 바로 이전/이후 포인트 포함 (선이 화면 경계까지 연결되도록)
       const visibleMovingAvgPoints: { time: number; avgY: number }[] = [];
