@@ -2514,13 +2514,17 @@ export class OverlayStockChart {
             }
             
             if (globalMin !== Infinity && globalMax !== -Infinity) {
-              // Y 값이 범위 내에 있는지 확인
-              if (yValue >= globalMin && yValue <= globalMax) {
-                const x = this.getX(xTime, minTime, maxTime);
-                // minMaxByChartKey의 min/max를 그대로 사용 (라인 그래프와 동일한 스케일)
-                const y = this.getY(yValue, globalMin, globalMax, area.y, area.height);
-                
-                // 이벤트 비교: label과 x, y 값으로 비교 (객체 참조가 다를 수 있음)
+              // Y 값이 범위를 벗어나도 차트 영역 경계에 클램핑해서 표시
+              const x = this.getX(xTime, minTime, maxTime);
+              
+              // Y 값을 차트 범위 내로 클램핑
+              const clampedYValue = Math.max(globalMin, Math.min(globalMax, yValue));
+              const y = this.getY(clampedYValue, globalMin, globalMax, area.y, area.height);
+              
+              // Y 값이 범위를 벗어났는지 확인 (경계에 표시됨을 나타내기 위해)
+              const isOutOfRange = yValue < globalMin || yValue > globalMax;
+              
+              // 이벤트 비교: label과 x, y 값으로 비교 (객체 참조가 다를 수 있음)
                 const isHovered = this.hoveredEventMarker !== null && 
                   this.hoveredEventMarker.label === event.label &&
                   isXYPointEvent(this.hoveredEventMarker) &&
@@ -2707,15 +2711,7 @@ export class OverlayStockChart {
                     this.eventTooltipsToRender.push({ event, x, y: tooltipY, pointsDown });
                   }
                 }
-              } else {
-                // 범위 밖이면 경고 표시 (디버깅용)
-                console.warn(`Event "${event.label}" Y value ${yValue} is out of range [${globalMin}, ${globalMax}] for chart "${chartKey}"`);
-              }
-            } else {
-              console.warn(`Event "${event.label}" could not find valid data range for chart "${chartKey}"`);
             }
-          } else {
-            console.warn(`Event "${event.label}" could not find chart layout for "${chartKey}"`);
           }
         }
       }
