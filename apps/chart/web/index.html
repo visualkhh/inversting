@@ -409,9 +409,20 @@
         <label><input type="radio" name="line-mode" value="step-from" /> 계단(from)</label>
         <label><input type="radio" name="line-mode" value="step-center" /> 계단(center)</label>
       </span>
+      <span class="radio-group">
       <label for="toggle-average" id="toggle-average-label">
         <input type="checkbox" id="toggle-average" /> 평균선
       </label>
+      <label for="toggle-ma5" id="toggle-ma5-label">
+        <input type="checkbox" id="toggle-ma5" /> 5일평균
+      </label>
+      <label for="toggle-ma10" id="toggle-ma10-label">
+        <input type="checkbox" id="toggle-ma10" /> 10일평균
+      </label>
+      <label for="toggle-ma20" id="toggle-ma20-label">
+        <input type="checkbox" id="toggle-ma20" /> 20일평균
+      </label>
+      </span>
       <label for="toggle-hide-values" id="toggle-hide-values-label">
         <input type="checkbox" id="toggle-hide-values" /> 수치숨김
       </label>
@@ -437,6 +448,20 @@
         <input type="checkbox" id="toggle-all-tickers" checked /> 전체
       </label>
       <div id="ticker-list"></div>
+    </div>
+    <div class="control-panel">
+      <span class="control-label">티커 이동평균선</span>
+      <div class="control-group">
+        <label for="ticker-ma5">
+          <input type="checkbox" id="ticker-ma5" /> 5일
+        </label>
+        <label for="ticker-ma10">
+          <input type="checkbox" id="ticker-ma10" /> 10일
+        </label>
+        <label for="ticker-ma20">
+          <input type="checkbox" id="ticker-ma20" /> 20일
+        </label>
+      </div>
     </div>
     <div id="range-slider-container">
       <span>X축 범위</span>

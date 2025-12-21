@@ -1,4 +1,4 @@
-import {OverlayStockChart, type EventMarker, type CommonEvents, type XPointEvent, type EventBase, LineType, type TickerData, type ChartKeyData, isChartKeyData} from './OverlayStockChart';
+import {OverlayStockChart, type EventMarker, type CommonEvents, type XPointEvent, type EventBase, LineType, type TickerData, type ChartKeyData, isChartKeyData, type ShowAverageType, type ShowAverageItem} from './OverlayStockChart';
 
 // 새로운 ChartData 타입 (OverlayStockChart에서 사용)
 type ChartData = {
@@ -16,6 +16,12 @@ const toggleVolumeEl = document.getElementById('toggle-volume') as HTMLInputElem
 const toggleOBVEl = document.getElementById('toggle-obv') as HTMLInputElement | null;
 const lineModeRadios = document.querySelectorAll('input[name="line-mode"]') as NodeListOf<HTMLInputElement>;
 const toggleAverageEl = document.getElementById('toggle-average') as HTMLInputElement | null;
+const toggleMA5El = document.getElementById('toggle-ma5') as HTMLInputElement | null;
+const toggleMA10El = document.getElementById('toggle-ma10') as HTMLInputElement | null;
+const toggleMA20El = document.getElementById('toggle-ma20') as HTMLInputElement | null;
+const tickerMA5El = document.getElementById('ticker-ma5') as HTMLInputElement | null;
+const tickerMA10El = document.getElementById('ticker-ma10') as HTMLInputElement | null;
+const tickerMA20El = document.getElementById('ticker-ma20') as HTMLInputElement | null;
 const toggleHideValuesEl = document.getElementById('toggle-hide-values') as HTMLInputElement | null;
 const toggleDailyGroupEl = document.getElementById('toggle-daily-group') as HTMLInputElement | null;
 const toggleHideLinesEl = document.getElementById('toggle-hide-lines') as HTMLInputElement | null;
@@ -55,9 +61,15 @@ type OldChartData = {
 // 기존 데이터를 새 형식으로 변환
 function convertToNewFormat(oldData: OldChartData[]): { [key: string]: ChartKeyData } {
   const result: { [key: string]: ChartKeyData } = {
-    price: { datas: [] },
-    volume: { datas: [] },
-    obv: { datas: [] }
+    price: { 
+      datas: []
+    },
+    volume: { 
+      datas: []
+    },
+    obv: { 
+      datas: []
+    }
   };
   
   oldData.forEach(d => {
@@ -155,6 +167,8 @@ function groupDataByDay(dataMap: Map<string, TickerData>): Map<string, TickerDat
     
     groupedMap.set(symbol, { 
       color: value.color, 
+      lineMode: value.lineMode,
+      movingAverageXwidth: value.movingAverageXwidth, // 티커별 이동평균선 설정 유지
       data: groupedData 
     });
   });
@@ -409,7 +423,7 @@ let showCandles = false;
 let showGaps = true;
 let visibleChartKeys = ['price', 'volume', 'obv']; // 표시할 차트 키들
 let lineMode: LineType = 'line-smooth';
-let showAverage = false;
+let showAverage: ShowAverageType = [];
 let hideValues = false;
 let dailyGroup = false;
 let hideLines = false;
@@ -649,11 +663,110 @@ let rangeMax = 100;
   }
 
   if (toggleAverageEl) {
-    toggleAverageEl.checked = showAverage;
+    toggleAverageEl.checked = showAverage.some(avg => avg.type === 'average');
     toggleAverageEl.addEventListener('change', () => {
-      showAverage = toggleAverageEl.checked;
-      overlayChart?.updateState({ showAverage });
+      // 전체 평균선 토글
+      if (toggleAverageEl.checked) {
+        // 전체 평균선 추가
+        if (!showAverage.some(avg => avg.type === 'average')) {
+          showAverage.push({ type: 'average', label: 'Average', color: '#FF0000', visible: true });
+        }
+      } else {
+        // 전체 평균선 제거
+        showAverage = showAverage.filter(avg => avg.type !== 'average');
+      }
+      overlayChart?.updateState({ showAverage: [...showAverage] });
     });
+  }
+
+  if (toggleMA5El) {
+    toggleMA5El.checked = showAverage.some(avg => avg.type === 'moving' && avg.xWidth === 60*1000*60*24*5);
+    toggleMA5El.addEventListener('change', () => {
+      // 5일 이동평균선 토글
+      if (toggleMA5El.checked) {
+        if (!showAverage.some(avg => avg.type === 'moving' && avg.xWidth === 60*1000*60*24*5)) {
+          showAverage.push({ type: 'moving', xWidth: 60*1000*60*24*5, label: 'MA5', color: '#0000FF', visible: true });
+        }
+      } else {
+        showAverage = showAverage.filter(avg => !(avg.type === 'moving' && avg.xWidth === 60*1000*60*24*5));
+      }
+      overlayChart?.updateState({ showAverage: [...showAverage] });
+    });
+  }
+
+  if (toggleMA10El) {
+    toggleMA10El.checked = showAverage.some(avg => avg.type === 'moving' && avg.xWidth === 60*1000*60*24*10);
+    toggleMA10El.addEventListener('change', () => {
+      // 10일 이동평균선 토글
+      if (toggleMA10El.checked) {
+        if (!showAverage.some(avg => avg.type === 'moving' && avg.xWidth === 60*1000*60*24*10)) {
+          showAverage.push({ type: 'moving', xWidth: 60*1000*60*24*10, label: 'MA10', color: '#00AA00', visible: true });
+        }
+      } else {
+        showAverage = showAverage.filter(avg => !(avg.type === 'moving' && avg.xWidth === 60*1000*60*24*10));
+      }
+      overlayChart?.updateState({ showAverage: [...showAverage] });
+    });
+  }
+
+  if (toggleMA20El) {
+    toggleMA20El.checked = showAverage.some(avg => avg.type === 'moving' && avg.xWidth === 60*1000*60*24*20);
+    toggleMA20El.addEventListener('change', () => {
+      // 20일 이동평균선 토글
+      if (toggleMA20El.checked) {
+        if (!showAverage.some(avg => avg.type === 'moving' && avg.xWidth === 60*1000*60*24*20)) {
+          showAverage.push({ type: 'moving', xWidth: 60*1000*60*24*20, label: 'MA20', color: '#FF00FF', visible: true });
+        }
+      } else {
+        showAverage = showAverage.filter(avg => !(avg.type === 'moving' && avg.xWidth === 60*1000*60*24*20));
+      }
+      overlayChart?.updateState({ showAverage: [...showAverage] });
+    });
+  }
+
+  // 티커별 이동평균선 핸들러
+  const updateTickerMovingAverages = () => {
+    if (!originalDataMap) {
+      console.log('[updateTickerMovingAverages] originalDataMap이 없습니다');
+      return;
+    }
+    
+    const xWidths: number[] = [];
+    if (tickerMA5El?.checked) xWidths.push(60*1000*60*24*5);
+    if (tickerMA10El?.checked) xWidths.push(60*1000*60*24*10);
+    if (tickerMA20El?.checked) xWidths.push(60*1000*60*24*20);
+    
+    console.log('[updateTickerMovingAverages] xWidths:', xWidths);
+    
+    // 모든 티커에 movingAverageXwidth 설정
+    const updatedDataMap = new Map<string, TickerData>();
+    originalDataMap.forEach((tickerData, symbol) => {
+      // 깊은 복사를 위해 새 객체 생성
+      const newTickerData: TickerData = {
+        ...tickerData,
+        movingAverageXwidth: xWidths.length > 0 ? xWidths : undefined
+      };
+      updatedDataMap.set(symbol, newTickerData);
+      console.log(`[updateTickerMovingAverages] ${symbol}:`, newTickerData.movingAverageXwidth);
+    });
+    
+    // dailyGroup이 활성화되어 있으면 그룹화 적용
+    const finalDataMap = dailyGroup ? groupDataByDay(updatedDataMap) : updatedDataMap;
+    
+    overlayChart?.setData(finalDataMap, currentData?.commonEvents || {});
+    overlayChart?.render();
+  };
+
+  if (tickerMA5El) {
+    tickerMA5El.addEventListener('change', updateTickerMovingAverages);
+  }
+
+  if (tickerMA10El) {
+    tickerMA10El.addEventListener('change', updateTickerMovingAverages);
+  }
+
+  if (tickerMA20El) {
+    tickerMA20El.addEventListener('change', updateTickerMovingAverages);
   }
 
   if (toggleHideValuesEl) {

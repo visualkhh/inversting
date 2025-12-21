@@ -20,6 +20,7 @@ export type ChartKeyData = {
 export type TickerData = {
   color?: string;
   lineMode?: LineType;
+  movingAverageXwidth?: number[]; // 티커별 이동평균선 xWidth 배열 (예: [432000000 (5일), 864000000 (10일)])
   data: ChartKeyData | {
     [key: string]: ChartKeyData;
   };
@@ -133,7 +134,7 @@ interface ChartOptions {
   showCandles?: boolean;
   fillGaps?: boolean;
   lineMode?: LineType;
-  showAverage?: boolean;
+  showAverage?: ShowAverageType;
   hideValues?: boolean;
   hideLines?: boolean;
   showGrid?: boolean;
@@ -215,6 +216,19 @@ interface ChartConfig {
   onZoomButtonClick?: (type: 'zoomIn' | 'zoomOut' | 'reset', zoomStart: number, zoomEnd: number) => void; // 줌 버튼 클릭 콜백
   onPointTooltip?: (point: { symbol: string; chartType: string; value: number; time: number; x: number; y: number } | null) => void; // 포인트 툴팁 열림/닫힘 콜백
 }
+// 평균선 타입 정의
+type ShowAverageBase = {
+  label: string;
+  color?: string;
+  visible?: boolean; // 활성/비활성 상태 (기본값: true)
+  opacity?: number; // 투명도 (0.0 ~ 1.0, 기본값: 1.0)
+};
+
+export type ShowAverageItem = 
+  | ({ type: 'average' } & ShowAverageBase) // 전체 평균선
+  | ({ type: 'moving'; xWidth: number } & ShowAverageBase); // 이동평균선 (xWidth: 데이터 포인트 개수)
+
+export type ShowAverageType = ShowAverageItem[]; // 여러 평균선을 배열로 지원
 
 interface RenderState {
   enabledTickers: Set<string>;
@@ -224,7 +238,7 @@ interface RenderState {
   showGaps: boolean;
   visibleChartKeys: string[]; // 표시할 차트 키 목록 (순서대로)
   lineMode: LineType; // 전체 기본 라인 모드
-  showAverage: boolean;
+  showAverage: ShowAverageType;
   hideValues: boolean;
   hideLines: boolean;
   showGrid: boolean;
@@ -282,10 +296,19 @@ export class OverlayStockChart {
   private dataMap: Map<string, { 
     color?: string;
     lineMode?: LineType;
+    movingAverageXwidth?: number[];
     data: { 
       [key: string]: ChartKeyData;
     }
   }>;
+  private originalDataMap: Map<string, { 
+    color?: string;
+    lineMode?: LineType;
+    movingAverageXwidth?: number[];
+    data: { 
+      [key: string]: ChartKeyData;
+    }
+  }>; // 확대/축소와 무관한 원본 데이터
   private commonEvents: CommonEvents;
   private tickerColors: Map<string, string> = new Map();
   private config: ChartConfig;
@@ -345,6 +368,7 @@ export class OverlayStockChart {
     this.width = 0;
     this.height = 0;
     this.dataMap = this.normalizeDataMap(dataMap);
+    this.originalDataMap = this.dataMap; // 원본 데이터 저장
     this.commonEvents = this.normalizeCommonEvents(commonEvents);
     
     // initialState 기본값 설정
@@ -356,7 +380,7 @@ export class OverlayStockChart {
       showGaps: true,
       visibleChartKeys: [],
       lineMode: 'line',
-      showAverage: false,
+      showAverage: [],
       hideValues: false,
       hideLines: false,
       showGrid: false,
@@ -409,6 +433,7 @@ export class OverlayStockChart {
   ): Map<string, { 
     color?: string;
     lineMode?: LineType;
+    movingAverageXwidth?: number[];
     data: { 
       [key: string]: ChartKeyData;
     }
@@ -416,6 +441,7 @@ export class OverlayStockChart {
     const normalizedMap = new Map<string, { 
       color?: string;
       lineMode?: LineType;
+      movingAverageXwidth?: number[];
       data: { 
         [key: string]: ChartKeyData;
       }
@@ -430,6 +456,7 @@ export class OverlayStockChart {
         normalizedMap.set(symbol, {
           color: value.color,
           lineMode: value.lineMode,
+          movingAverageXwidth: value.movingAverageXwidth,
           data: { 
             'default': {
               datas: data.datas,
@@ -443,6 +470,7 @@ export class OverlayStockChart {
         normalizedMap.set(symbol, {
           color: value.color,
           lineMode: value.lineMode,
+          movingAverageXwidth: value.movingAverageXwidth,
           data: data
         });
       }
@@ -476,6 +504,7 @@ export class OverlayStockChart {
 
   setData(dataMap: Map<string, TickerData>, commonEvents: CommonEvents = {}) {
     this.dataMap = this.normalizeDataMap(dataMap);
+    this.originalDataMap = this.dataMap; // 원본 데이터 저장
     this.commonEvents = this.normalizeCommonEvents(commonEvents);
     
     // 티커별 색상 재초기화
@@ -568,11 +597,20 @@ export class OverlayStockChart {
     
     // 데이터 준비
     const dataBySymbol = new Map<string, { time: number; open: number; high: number; low: number; close: number }[]>();
-
+    
+    // 티커별 movingAverageXwidth 수집 (각 티커마다 다를 수 있음)
+    const tickerMovingAverages = new Map<string, number[]>();
+    
     this.dataMap.forEach((value, symbol) => {
       const points: { time: number; open: number; high: number; low: number; close: number }[] = [];
       const chartDataObj = value.data[chartKey];
       if (!chartDataObj) return;
+      
+      // 티커의 movingAverageXwidth 저장 (TickerData 타입으로 캐스팅)
+      const tickerData = value as TickerData;
+      if (tickerData.movingAverageXwidth && tickerData.movingAverageXwidth.length > 0) {
+        tickerMovingAverages.set(symbol, tickerData.movingAverageXwidth);
+      }
       
       const chartData = chartDataObj.datas || [];
       chartData.forEach(d => {
@@ -734,9 +772,59 @@ export class OverlayStockChart {
       }
     });
 
-    // 평균선
-    if (showAverage && dataBySymbol.size > 0) {
-      this.drawAverageLine(dataBySymbol, minMaxBySymbol, sortedTimes, minTime, maxTime, graphTop, graphHeight, lineMode);
+    // 평균선들 - 전역 showAverage와 티커별 movingAverageXwidth 모두 지원
+    // 1. 전역 showAverage 그리기 (모든 티커의 평균)
+    if (showAverage && showAverage.length > 0 && dataBySymbol.size > 0) {
+      showAverage.forEach(avgConfig => {
+        // visible이 false면 그리지 않음
+        if (avgConfig.visible === false) {
+          return;
+        }
+        this.drawAverageLine(dataBySymbol, minMaxBySymbol, sortedTimes, minTime, maxTime, graphTop, graphHeight, lineMode, avgConfig, chartKey);
+      });
+    }
+    
+    // 2. 티커별 movingAverageXwidth 그리기 (각 티커마다 독립적)
+    if (tickerMovingAverages.size > 0) {
+      tickerMovingAverages.forEach((xWidths, symbol) => {
+        // 해당 티커의 데이터만 사용
+        const tickerDataBySymbol = new Map<string, { time: number; close: number }[]>();
+        const tickerData = dataBySymbol.get(symbol);
+        if (!tickerData) {
+          return;
+        }
+        
+        tickerDataBySymbol.set(symbol, tickerData.map(p => ({ time: p.time, close: p.close })));
+        
+        const tickerMinMax = minMaxBySymbol.get(symbol);
+        if (!tickerMinMax) {
+          return;
+        }
+        
+        const tickerMinMaxBySymbol = new Map<string, { min: number; max: number }>();
+        tickerMinMaxBySymbol.set(symbol, tickerMinMax);
+        
+        // 티커 색상 가져오기
+        const tickerColor = this.getTickerColor(symbol);
+        
+        // 각 xWidth에 대해 이동평균선 그리기 (progressive opacity)
+        const totalLines = xWidths.length;
+        xWidths.forEach((xWidth, index) => {
+          // 첫 번째 선은 불투명(1.0), 마지막 선은 투명(0.3)
+          const opacity = totalLines === 1 ? 1.0 : 1.0 - (index / (totalLines - 1)) * 0.7;
+          
+          const avgConfig: ShowAverageItem = {
+            type: 'moving',
+            xWidth,
+            label: `${symbol}-MA${Math.round(xWidth / (60 * 1000 * 60 * 24))}`,
+            color: tickerColor, // 티커 색상 사용
+            visible: true,
+            opacity // opacity 추가
+          };
+          this.drawAverageLine(tickerDataBySymbol, tickerMinMaxBySymbol, sortedTimes, minTime, maxTime, graphTop, graphHeight, lineMode, avgConfig, chartKey);
+        });
+
+      });
     }
 
     return { dataBySymbol, minMaxBySymbol, sortedTimes };
@@ -879,7 +967,7 @@ export class OverlayStockChart {
       }
 
       // High-Low 라인
-      this.ctx.globalAlpha = 1; // 0.3
+      this.ctx.globalAlpha = 0.6; // 0.3
       // this.ctx.globalAlpha = 0.3; // 0.3
       this.ctx.strokeStyle = borderColor;
       this.ctx.lineWidth = 1;
@@ -1071,94 +1159,335 @@ export class OverlayStockChart {
     maxTime: number,
     topY: number,
     height: number,
-    lineMode: string
+    lineMode: string,
+    averageConfig: ShowAverageItem,
+    chartKey: string
   ) {
-    const avgPoints: { time: number; avgY: number }[] = [];
     
-    sortedTimes.forEach(time => {
-      const yValues: number[] = [];
+
+    // 평균선 계산을 위해 원본 데이터(this.originalDataMap) 사용 - 확대와 무관하게 전체 데이터 사용
+    const fullDataBySymbol = new Map<string, { time: number; close: number }[]>();
+    
+    this.originalDataMap.forEach((value, symbol) => {
+      // visibleTickers에 있는 티커만 사용
+      if (!this.state.visibleTickers.has(symbol)) return;
       
-      dataBySymbol.forEach((sortedPoints, symbol) => {
-        const minMax = minMaxBySymbol.get(symbol);
-        if (!minMax) return;
-        
-        let closeValue: number | null = null;
-        const exactPoint = sortedPoints.find(p => p.time === time);
-        
-        if (exactPoint) {
-          closeValue = exactPoint.close;
-        } else {
-          let prevPoint = null;
-          let nextPoint = null;
-          
-          for (let i = 0; i < sortedPoints.length; i++) {
-            if (sortedPoints[i].time < time) {
-              prevPoint = sortedPoints[i];
-            } else if (sortedPoints[i].time > time) {
-              nextPoint = sortedPoints[i];
-              break;
-            }
-          }
-          
-          if (prevPoint && nextPoint) {
-            const ratio = (time - prevPoint.time) / (nextPoint.time - prevPoint.time);
-            closeValue = prevPoint.close + (nextPoint.close - prevPoint.close) * ratio;
-          } else if (prevPoint) {
-            closeValue = prevPoint.close;
-          } else if (nextPoint) {
-            closeValue = nextPoint.close;
-          }
-        }
-        
-        if (closeValue !== null) {
-          const yCoord = this.getY(closeValue, minMax.min, minMax.max, topY, height);
-          yValues.push(yCoord);
+      const points: { time: number; close: number }[] = [];
+      
+      // 현재 chartKey의 데이터 사용 (price, volume, obv 등)
+      const chartDataObj = value.data[chartKey];
+      if (!chartDataObj) return;
+      
+      const chartData = chartDataObj.datas || [];
+      chartData.forEach(d => {
+        if (d.y !== null && d.y !== undefined) {
+          points.push({
+            time: d.x,
+            close: d.y
+          });
         }
       });
       
-      if (yValues.length > 0) {
-        const avgY = yValues.reduce((sum, y) => sum + y, 0) / yValues.length;
-        avgPoints.push({ time, avgY });
+      if (points.length > 0) {
+        fullDataBySymbol.set(symbol, points);
       }
     });
     
-    if (avgPoints.length > 0) {
-      this.ctx.save();
-      this.ctx.beginPath();
-      this.ctx.rect(this.chartAreaLeft, topY, this.chartAreaWidth, height);
-      this.ctx.clip();
+    // 전체 데이터의 모든 시간 포인트 수집
+    const allTimesSet = new Set<number>();
+    fullDataBySymbol.forEach((sortedPoints) => {
+      sortedPoints.forEach(point => {
+        allTimesSet.add(point.time);
+      });
+    });
+    const allTimes = Array.from(allTimesSet).sort((a, b) => a - b);
+    
+    if (averageConfig.type === 'average') {
+      // 전체 평균선: 모든 티커의 평균을 하나의 선으로
+      const avgPoints: { time: number; avgValue: number }[] = [];
       
-      this.ctx.strokeStyle = this.config.averageStrokeStyle || '#000000';
-      this.ctx.lineWidth = this.config.averageLineWidth || 2;
-      this.ctx.setLineDash(this.config.averageLineDash || [3, 2]);
-      this.ctx.globalAlpha = 1.0;
-      
-      this.ctx.beginPath();
-      avgPoints.forEach((point, i) => {
-        const x = this.getX(point.time, minTime, maxTime);
-        const y = point.avgY;
+      // 전체 시간에 대해 평균 계산 (실제 값으로)
+      allTimes.forEach(time => {
+        const closeValues: number[] = [];
         
-        if (i === 0) {
-          this.ctx.moveTo(x, y);
-        } else if (lineMode.startsWith('line-smooth') && i > 0) {
-          const prevPoint = avgPoints[i - 1];
-          const prevX = this.getX(prevPoint.time, minTime, maxTime);
-          const prevY = prevPoint.avgY;
-          const cp1x = prevX + (x - prevX) / 3;
-          const cp1y = prevY;
-          const cp2x = prevX + (x - prevX) * 2 / 3;
-          const cp2y = y;
-          this.ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
-        } else {
-          this.ctx.lineTo(x, y);
+        fullDataBySymbol.forEach((sortedPoints, symbol) => {
+          let closeValue: number | null = null;
+          const exactPoint = sortedPoints.find(p => p.time === time);
+          
+          if (exactPoint) {
+            closeValue = exactPoint.close;
+          } else {
+            let prevPoint = null;
+            let nextPoint = null;
+            
+            for (let i = 0; i < sortedPoints.length; i++) {
+              if (sortedPoints[i].time < time) {
+                prevPoint = sortedPoints[i];
+              } else if (sortedPoints[i].time > time) {
+                nextPoint = sortedPoints[i];
+                break;
+              }
+            }
+            
+            if (prevPoint && nextPoint) {
+              const ratio = (time - prevPoint.time) / (nextPoint.time - prevPoint.time);
+              closeValue = prevPoint.close + (nextPoint.close - prevPoint.close) * ratio;
+            } else if (prevPoint) {
+              closeValue = prevPoint.close;
+            } else if (nextPoint) {
+              closeValue = nextPoint.close;
+            }
+          }
+          
+          if (closeValue !== null) {
+            closeValues.push(closeValue);
+          }
+        });
+        
+        if (closeValues.length > 0) {
+          const avgValue = closeValues.reduce((sum, v) => sum + v, 0) / closeValues.length;
+          avgPoints.push({ time, avgValue });
         }
       });
-      this.ctx.stroke();
       
-      this.ctx.setLineDash([]);
-      this.ctx.globalAlpha = 1.0;
-      this.ctx.restore();
+      // 평균값의 min/max 계산
+      const avgValues = avgPoints.map(p => p.avgValue);
+      const minAvgValue = Math.min(...avgValues);
+      const maxAvgValue = Math.max(...avgValues);
+      
+      // Y 좌표로 변환
+      const avgPointsWithY = avgPoints.map(p => ({
+        time: p.time,
+        avgY: this.state.normalize 
+          ? this.getY(p.avgValue, minAvgValue, maxAvgValue, topY, height)
+          : (() => {
+              // 비정규화 모드: 전체 데이터의 min/max 사용
+              let globalMin = Infinity;
+              let globalMax = -Infinity;
+              minMaxBySymbol.forEach((minMax) => {
+                globalMin = Math.min(globalMin, minMax.min);
+                globalMax = Math.max(globalMax, minMax.max);
+              });
+              return this.getY(p.avgValue, globalMin, globalMax, topY, height);
+            })()
+      }));
+      
+      // 화면에 보이는 영역 + 바로 이전/이후 포인트 포함 (선이 화면 경계까지 연결되도록)
+      const visibleAvgPoints: { time: number; avgY: number }[] = [];
+      let foundFirstVisible = false;
+      
+      for (let i = 0; i < avgPointsWithY.length; i++) {
+        const point = avgPointsWithY[i];
+        
+        // 화면 안에 있는 포인트
+        if (point.time >= minTime && point.time <= maxTime) {
+          // 첫 번째 화면 내 포인트를 찾았고, 이전 포인트가 있으면 추가
+          if (!foundFirstVisible && i > 0) {
+            visibleAvgPoints.push(avgPointsWithY[i - 1]);
+          }
+          foundFirstVisible = true;
+          visibleAvgPoints.push(point);
+        }
+        // 화면 이후 첫 포인트 (마지막 연결용)
+        else if (point.time > maxTime && foundFirstVisible) {
+          visibleAvgPoints.push(point);
+          break;
+        }
+      }
+      
+      this.drawSingleAverageLine(visibleAvgPoints, minTime, maxTime, topY, height, lineMode, averageConfig);
+      
+    } else if (averageConfig.type === 'moving') {
+      // 이동평균선: 전체 평균에 대한 이동평균 (하나의 선)
+      const xWidth = averageConfig.xWidth; // 시간 범위 (밀리초)
+      
+      // 먼저 전체 평균 계산 (모든 시간에 대해)
+      const avgValues: { time: number; avgValue: number }[] = [];
+      
+      allTimes.forEach(time => {
+        const yValues: number[] = [];
+        
+        fullDataBySymbol.forEach((sortedPoints, symbol) => {
+          const minMax = minMaxBySymbol.get(symbol);
+          if (!minMax) return;
+          
+          let closeValue: number | null = null;
+          const exactPoint = sortedPoints.find(p => p.time === time);
+          
+          if (exactPoint) {
+            closeValue = exactPoint.close;
+          } else {
+            let prevPoint = null;
+            let nextPoint = null;
+            
+            for (let i = 0; i < sortedPoints.length; i++) {
+              if (sortedPoints[i].time < time) {
+                prevPoint = sortedPoints[i];
+              } else if (sortedPoints[i].time > time) {
+                nextPoint = sortedPoints[i];
+                break;
+              }
+            }
+            
+            if (prevPoint && nextPoint) {
+              const ratio = (time - prevPoint.time) / (nextPoint.time - prevPoint.time);
+              closeValue = prevPoint.close + (nextPoint.close - prevPoint.close) * ratio;
+            } else if (prevPoint) {
+              closeValue = prevPoint.close;
+            } else if (nextPoint) {
+              closeValue = nextPoint.close;
+            }
+          }
+          
+          if (closeValue !== null) {
+            yValues.push(closeValue);
+          }
+        });
+        
+        if (yValues.length > 0) {
+          const avgValue = yValues.reduce((sum, y) => sum + y, 0) / yValues.length;
+          avgValues.push({ time, avgValue });
+        }
+      });
+      
+      // 전체 평균값에 대해 이동평균 계산
+      const movingAvgPoints: { time: number; avgY: number }[] = [];
+      const firstDataTime = avgValues.length > 0 ? avgValues[0].time : 0;
+      
+      avgValues.forEach((item, index) => {
+        const time = item.time;
+        
+        // xWidth 기간이 지나기 전에는 그리지 않음
+        if (time < firstDataTime + xWidth) {
+          return;
+        }
+        
+        // 현재 시간에서 xWidth 이전 시간까지의 범위
+        const startTime = time - xWidth;
+        
+        // 해당 시간 범위 내의 평균값들 수집
+        const rangeValues: number[] = [];
+        avgValues.forEach(v => {
+          if (v.time > startTime && v.time <= time) {
+            rangeValues.push(v.avgValue);
+          }
+        });
+        
+        // 데이터가 있을 때만 계산
+        if (rangeValues.length > 0) {
+          const movingAvg = rangeValues.reduce((sum, v) => sum + v, 0) / rangeValues.length;
+          
+          // Y 좌표 계산 (정규화 고려)
+          let yCoord: number;
+          if (this.state.normalize) {
+            // 정규화 모드: 전체 평균값의 min/max 계산
+            const allAvgValues = avgValues.map(v => v.avgValue);
+            const minAvg = Math.min(...allAvgValues);
+            const maxAvg = Math.max(...allAvgValues);
+            yCoord = this.getY(movingAvg, minAvg, maxAvg, topY, height);
+          } else {
+            // 비정규화 모드: 전체 데이터의 min/max 사용
+            let globalMin = Infinity;
+            let globalMax = -Infinity;
+            minMaxBySymbol.forEach((minMax) => {
+              globalMin = Math.min(globalMin, minMax.min);
+              globalMax = Math.max(globalMax, minMax.max);
+            });
+            yCoord = this.getY(movingAvg, globalMin, globalMax, topY, height);
+          }
+          
+          movingAvgPoints.push({ time, avgY: yCoord });
+        }
+      });
+      
+      // 화면에 보이는 영역 + 바로 이전/이후 포인트 포함 (선이 화면 경계까지 연결되도록)
+      const visibleMovingAvgPoints: { time: number; avgY: number }[] = [];
+      let foundFirstVisible = false;
+      
+      for (let i = 0; i < movingAvgPoints.length; i++) {
+        const point = movingAvgPoints[i];
+        
+        // 화면 안에 있는 포인트
+        if (point.time >= minTime && point.time <= maxTime) {
+          // 첫 번째 화면 내 포인트를 찾았고, 이전 포인트가 있으면 추가
+          if (!foundFirstVisible && i > 0) {
+            visibleMovingAvgPoints.push(movingAvgPoints[i - 1]);
+          }
+          foundFirstVisible = true;
+          visibleMovingAvgPoints.push(point);
+        }
+        // 화면 이후 첫 포인트 (마지막 연결용)
+        else if (point.time > maxTime && foundFirstVisible) {
+          visibleMovingAvgPoints.push(point);
+          break;
+        }
+      }
+      
+      this.drawSingleAverageLine(visibleMovingAvgPoints, minTime, maxTime, topY, height, lineMode, averageConfig);
     }
+  }
+
+  private drawSingleAverageLine(
+    avgPoints: { time: number; avgY: number }[],
+    minTime: number,
+    maxTime: number,
+    topY: number,
+    height: number,
+    lineMode: string,
+    averageConfig: ShowAverageItem
+  ) {
+    if (avgPoints.length === 0) return;
+    
+    this.ctx.save();
+    this.ctx.beginPath();
+    this.ctx.rect(this.chartAreaLeft, topY, this.chartAreaWidth, height);
+    this.ctx.clip();
+    
+    // 색상 설정 (config 우선, 없으면 averageConfig.color, 없으면 기본값)
+    const strokeStyle = averageConfig.color || this.config.averageStrokeStyle || '#000000';
+    this.ctx.strokeStyle = strokeStyle;
+    
+    // 티커별 이동평균선인지 확인 (label에 '-MA'가 포함되어 있으면 티커별)
+    const isTickerMA = averageConfig.label.includes('-MA');
+    
+    if (isTickerMA) {
+      // 티커별 이동평균선: lineWidth 1, 점선
+      this.ctx.lineWidth = 1;
+      this.ctx.setLineDash([5, 3]);
+    } else {
+      // 전역 평균선: config 설정 사용
+      this.ctx.lineWidth = this.config.averageLineWidth || 2;
+      this.ctx.setLineDash(this.config.averageLineDash || [3, 2]);
+    }
+    
+    // opacity 설정 (averageConfig에 있으면 사용, 없으면 1.0)
+    this.ctx.globalAlpha = averageConfig.opacity !== undefined ? averageConfig.opacity : 1.0;
+    
+    this.ctx.beginPath();
+    avgPoints.forEach((point, i) => {
+      const x = this.getX(point.time, minTime, maxTime);
+      const y = point.avgY;
+      
+      if (i === 0) {
+        this.ctx.moveTo(x, y);
+      } else if (lineMode.startsWith('line-smooth') && i > 0) {
+        const prevPoint = avgPoints[i - 1];
+        const prevX = this.getX(prevPoint.time, minTime, maxTime);
+        const prevY = prevPoint.avgY;
+        const cp1x = prevX + (x - prevX) / 3;
+        const cp1y = prevY;
+        const cp2x = prevX + (x - prevX) * 2 / 3;
+        const cp2y = y;
+        this.ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
+      } else {
+        this.ctx.lineTo(x, y);
+      }
+    });
+    this.ctx.stroke();
+    
+    this.ctx.setLineDash([]);
+    this.ctx.globalAlpha = 1.0;
+    this.ctx.restore();
   }
 
   drawLegend(
@@ -1182,6 +1511,7 @@ export class OverlayStockChart {
     let currentLineMaxHeight = legendHeight;
     const maxWidth = area.x + area.width;
     
+    // 티커 범례
     dataBySymbol.forEach((_, symbol) => {
       const color = this.getTickerColor(symbol);
       const isVisible = visibleTickers.has(symbol);
@@ -1225,6 +1555,61 @@ export class OverlayStockChart {
       
       currentX += itemWidth;
     });
+    
+    // 평균선 범례 추가 (클릭 가능하도록 legendItems에 포함)
+    if (this.state.showAverage && this.state.showAverage.length > 0) {
+      this.state.showAverage.forEach(avgConfig => {
+        const label = avgConfig.label;
+        const color = avgConfig.color || this.config.averageStrokeStyle || '#000000';
+        const isVisible = avgConfig.visible !== false; // 기본값은 true
+        
+        // 평균선 식별자 생성 (average: 또는 moving:xWidth 형식)
+        const avgSymbol = avgConfig.type === 'average' 
+          ? 'average:' 
+          : `moving:${avgConfig.xWidth}`;
+        
+        // 텍스트 너비 측정
+        const textWidth = this.ctx.measureText(label).width;
+        const itemWidth = legendBoxSize + textMargin + textWidth + itemSpacing;
+        
+        // 현재 줄에 공간이 부족하면 다음 줄로
+        if (currentX + itemWidth > maxWidth && currentX > area.x) {
+          currentX = area.x;
+          currentY += currentLineMaxHeight + lineSpacing;
+          currentLineMaxHeight = legendHeight;
+        }
+        
+        const itemX = currentX;
+        
+        // 평균선도 legendItems에 추가 (클릭 가능하도록)
+        newLegendItems.push({
+          symbol: avgSymbol,
+          x: itemX - 5,
+          y: currentY - legendHeight / 2,
+          width: itemWidth,
+          height: legendHeight
+        });
+        
+        // 활성/비활성 상태에 따라 투명도 조절
+        this.ctx.globalAlpha = isVisible ? 1.0 : 0.3;
+        
+        // 정사각형 그리기
+        this.ctx.fillStyle = color;
+        this.ctx.fillRect(
+          itemX, 
+          currentY - legendBoxSize / 2, 
+          legendBoxSize, 
+          legendBoxSize
+        );
+        
+        // 텍스트 그리기
+        this.ctx.fillStyle = isVisible ? '#000000' : '#999999';
+        this.ctx.fillText(label, itemX + legendBoxSize + textMargin, currentY);
+        this.ctx.globalAlpha = 1.0;
+        
+        currentX += itemWidth;
+      });
+    }
     
     return newLegendItems;
   }
@@ -3768,13 +4153,6 @@ export class OverlayStockChart {
 
     // 클릭
     this.canvas.addEventListener('click', (e: MouseEvent) => {
-      console.log('[click] 이벤트 발생', {
-        x: e.clientX,
-        y: e.clientY,
-        zoomStart: this.zoomStart,
-        zoomEnd: this.zoomEnd
-      });
-      
       const rect = this.canvas.getBoundingClientRect();
       const clickX = e.clientX - rect.left;
       const clickY = e.clientY - rect.top;
@@ -3788,17 +4166,8 @@ export class OverlayStockChart {
       const tapThreshold = 300; // 300ms 이내
       const distanceThreshold = 30; // 30px 이내
       
-      console.log('[click] 더블클릭 체크', {
-        timeDiff,
-        distance,
-        isDoubleClick: timeDiff < tapThreshold && distance < distanceThreshold,
-        isInChartArea: this.isInChartArea(clickX, clickY),
-        isZoomed: this.zoomStart > 0 || this.zoomEnd < 100
-      });
-      
       if (timeDiff < tapThreshold && distance < distanceThreshold) {
         // 더블클릭 감지됨
-        console.log('[click] 더블클릭 감지됨!');
         
         // 줌 버튼 영역이면 무시
         let isZoomButton = false;
@@ -3821,17 +4190,9 @@ export class OverlayStockChart {
         }
         
         if (!isZoomButton && !isLegend && this.isInChartArea(clickX, clickY) && (this.zoomStart > 0 || this.zoomEnd < 100)) {
-          console.log('[click] 줌 리셋 실행');
           this.lastTapTime = 0; // 초기화
           this.zoomReset();
           return;
-        } else {
-          console.log('[click] 줌 리셋 조건 불만족', {
-            isZoomButton,
-            isLegend,
-            isInChartArea: this.isInChartArea(clickX, clickY),
-            isZoomed: this.zoomStart > 0 || this.zoomEnd < 100
-          });
         }
       }
       
@@ -3931,16 +4292,37 @@ export class OverlayStockChart {
         for (const item of this.legendItems) {
           if (clickX >= item.x && clickX <= item.x + item.width &&
               clickY >= item.y && clickY <= item.y + item.height) {
-            const wasVisible = this.state.visibleTickers.has(item.symbol);
-            if (wasVisible) {
-              this.state.visibleTickers.delete(item.symbol);
-            } else {
-              this.state.visibleTickers.add(item.symbol);
-            }
             
-            // 콜백 호출
-            if (this.config.onLegendClick) {
-              this.config.onLegendClick(item.symbol, !wasVisible);
+            // 평균선 범례인지 확인 (average: 또는 moving:로 시작)
+            if (item.symbol.startsWith('average:') || item.symbol.startsWith('moving:')) {
+              // 평균선 토글 (visible 속성만 변경)
+              if (item.symbol === 'average:') {
+                // 전체 평균선 토글
+                const avgItem = this.state.showAverage.find(avg => avg.type === 'average');
+                if (avgItem) {
+                  avgItem.visible = !avgItem.visible;
+                }
+              } else if (item.symbol.startsWith('moving:')) {
+                // 이동평균선 토글
+                const xWidth = parseInt(item.symbol.split(':')[1]);
+                const avgItem = this.state.showAverage.find(avg => avg.type === 'moving' && avg.xWidth === xWidth);
+                if (avgItem) {
+                  avgItem.visible = !avgItem.visible;
+                }
+              }
+            } else {
+              // 티커 토글
+              const wasVisible = this.state.visibleTickers.has(item.symbol);
+              if (wasVisible) {
+                this.state.visibleTickers.delete(item.symbol);
+              } else {
+                this.state.visibleTickers.add(item.symbol);
+              }
+              
+              // 콜백 호출
+              if (this.config.onLegendClick) {
+                this.config.onLegendClick(item.symbol, !wasVisible);
+              }
             }
             
             this.render();
@@ -3952,14 +4334,6 @@ export class OverlayStockChart {
 
     // 더블클릭 (PC 및 모바일 모드)
     this.canvas.addEventListener('dblclick', (e: MouseEvent) => {
-      console.log('[dblclick] 이벤트 발생', {
-        x: e.clientX,
-        y: e.clientY,
-        zoomStart: this.zoomStart,
-        zoomEnd: this.zoomEnd,
-        isInChartArea: this.isInChartArea(e.clientX - this.canvas.getBoundingClientRect().left, e.clientY - this.canvas.getBoundingClientRect().top)
-      });
-      
       e.preventDefault(); // 기본 동작 방지
       
       const rect = this.canvas.getBoundingClientRect();
@@ -3976,7 +4350,6 @@ export class OverlayStockChart {
       for (const btn of this.zoomButtons) {
         if (x >= btn.x && x <= btn.x + btn.width &&
             y >= btn.y && y <= btn.y + btn.height) {
-          console.log('[dblclick] 줌 버튼 영역 - 무시');
           return;
         }
       }
@@ -3985,20 +4358,13 @@ export class OverlayStockChart {
       for (const item of this.legendItems) {
         if (x >= item.x && x <= item.x + item.width &&
             y >= item.y && y <= item.y + item.height) {
-          console.log('[dblclick] 범례 영역 - 무시');
           return;
         }
       }
 
       // 확대 상태에서 차트 영역을 더블클릭하면 초기화
       if (this.isInChartArea(x, y) && (this.zoomStart > 0 || this.zoomEnd < 100)) {
-        console.log('[dblclick] 줌 리셋 실행');
         this.zoomReset();
-      } else {
-        console.log('[dblclick] 줌 리셋 조건 불만족', {
-          isInChartArea: this.isInChartArea(x, y),
-          isZoomed: this.zoomStart > 0 || this.zoomEnd < 100
-        });
       }
     });
 
@@ -4020,19 +4386,12 @@ export class OverlayStockChart {
 
     // 터치 시작
     this.canvas.addEventListener('touchstart', (e: TouchEvent) => {
-      console.log('[touchstart] 이벤트 발생', {
-        touches: e.touches.length,
-        zoomStart: this.zoomStart,
-        zoomEnd: this.zoomEnd
-      });
-      
       const rect = this.canvas.getBoundingClientRect();
       const touch = e.touches[0];
       const x = touch.clientX - rect.left;
       const y = touch.clientY - rect.top;
 
       if (e.touches.length === 2) {
-        console.log('[touchstart] 핀치 제스처 감지');
         this.lastPinchDistance = this.getPinchDistance(e.touches);
         this.isTouchDragging = false;
         this.isTouchPanning = false;
@@ -4042,7 +4401,6 @@ export class OverlayStockChart {
       for (const btn of this.zoomButtons) {
         if (x >= btn.x && x <= btn.x + btn.width &&
             y >= btn.y && y <= btn.y + btn.height) {
-          console.log('[touchstart] 줌 버튼 영역');
           return;
         }
       }
@@ -4179,21 +4537,9 @@ export class OverlayStockChart {
           const dy = tapY - this.lastTapY;
           const distance = Math.sqrt(dx * dx + dy * dy);
           
-          console.log('[touchend] 더블탭 체크', {
-            timeDiff,
-            distance,
-            tapThreshold,
-            distanceThreshold,
-            isDoubleTap: timeDiff < tapThreshold && distance < distanceThreshold,
-            isInChartArea: this.isInChartArea(tapX, tapY),
-            isZoomed: this.zoomStart > 0 || this.zoomEnd < 100
-          });
-          
           if (timeDiff < tapThreshold && distance < distanceThreshold) {
             // 더블탭 감지됨 - 확대 상태에서 차트 영역이면 초기화
-            console.log('[touchend] 더블탭 감지됨!');
             if (this.isInChartArea(tapX, tapY) && (this.zoomStart > 0 || this.zoomEnd < 100)) {
-              console.log('[touchend] 줌 리셋 실행');
               this.zoomReset();
               this.lastTapTime = 0; // 초기화
               this.isTouchDragging = false;
@@ -4203,8 +4549,6 @@ export class OverlayStockChart {
               this.touchStartX = null;
               this.touchStartY = null;
               return;
-            } else {
-              console.log('[touchend] 줌 리셋 조건 불만족');
             }
           }
           
@@ -4292,16 +4636,37 @@ export class OverlayStockChart {
           for (const item of this.legendItems) {
             if (tapX >= item.x && tapX <= item.x + item.width &&
                 tapY >= item.y && tapY <= item.y + item.height) {
-              const wasVisible = this.state.visibleTickers.has(item.symbol);
-              if (wasVisible) {
-                this.state.visibleTickers.delete(item.symbol);
-              } else {
-                this.state.visibleTickers.add(item.symbol);
-              }
               
-              // 콜백 호출
-              if (this.config.onLegendClick) {
-                this.config.onLegendClick(item.symbol, !wasVisible);
+              // 평균선 범례인지 확인 (average: 또는 moving:로 시작)
+              if (item.symbol.startsWith('average:') || item.symbol.startsWith('moving:')) {
+                // 평균선 토글 (visible 속성만 변경)
+                if (item.symbol === 'average:') {
+                  // 전체 평균선 토글
+                  const avgItem = this.state.showAverage.find(avg => avg.type === 'average');
+                  if (avgItem) {
+                    avgItem.visible = !avgItem.visible;
+                  }
+                } else if (item.symbol.startsWith('moving:')) {
+                  // 이동평균선 토글
+                  const xWidth = parseInt(item.symbol.split(':')[1]);
+                  const avgItem = this.state.showAverage.find(avg => avg.type === 'moving' && avg.xWidth === xWidth);
+                  if (avgItem) {
+                    avgItem.visible = !avgItem.visible;
+                  }
+                }
+              } else {
+                // 티커 토글
+                const wasVisible = this.state.visibleTickers.has(item.symbol);
+                if (wasVisible) {
+                  this.state.visibleTickers.delete(item.symbol);
+                } else {
+                  this.state.visibleTickers.add(item.symbol);
+                }
+                
+                // 콜백 호출
+                if (this.config.onLegendClick) {
+                  this.config.onLegendClick(item.symbol, !wasVisible);
+                }
               }
               
               break;
@@ -4383,7 +4748,7 @@ export class OverlayStockChart {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     
     // 활성화된 티커만 필터링
-    let filteredDataMap = new Map<string, { color?: string; lineMode?: LineType; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } }>();
+    let filteredDataMap = new Map<string, { color?: string; lineMode?: LineType; movingAverageXwidth?: number[]; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } }>();
     this.dataMap.forEach((value, symbol) => {
       if (this.state.enabledTickers.has(symbol)) {
         filteredDataMap.set(symbol, value);
@@ -4424,7 +4789,7 @@ export class OverlayStockChart {
     
     // 시간 기반으로 각 티커 필터링
     if (this.state.rangeMin > 0 || this.state.rangeMax < 100 || this.zoomStart > 0 || this.zoomEnd < 100) {
-      const timeFilteredMap = new Map<string, { color?: string; lineMode?: LineType; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } }>();
+      const timeFilteredMap = new Map<string, { color?: string; lineMode?: LineType; movingAverageXwidth?: number[]; data: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } }>();
       filteredDataMap.forEach((value, symbol) => {
         const filteredData: { [key: string]: { datas: ChartData[]; events?: EventMarker[]; lineMode?: LineType } } = {};
         
@@ -4473,6 +4838,7 @@ export class OverlayStockChart {
         timeFilteredMap.set(symbol, { 
           color: value.color, 
           lineMode: value.lineMode, // 티커별 lineMode 보존
+          movingAverageXwidth: value.movingAverageXwidth, // 이동평균선 설정 보존
           data: filteredData 
         });
       });
